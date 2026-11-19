@@ -1,0 +1,32 @@
+﻿Functional Requirement,User Story / Acceptance criteria,Component / API,Future test,Scope,Rule / Source,Відповідальний за перевірку
+FR-01,US-01 / AC-01-01,Shopping service / POST /lists,test_create_list_trimmed,ЛР2–ЛР3,requirements.md / US-01; FR-01 (джерело U),Данченко Денис
+FR-01,US-01 / AC-01-02,Shopping service / POST /lists,test_create_list_required_name,ЛР2–ЛР3,requirements.md / US-01; FR-01 (джерело U),Пархоменко Олександр
+FR-01,US-01 / AC-01-03,Shopping service / POST /lists,test_create_list_name_boundaries,ЛР2–ЛР3,requirements.md / US-01; FR-01 (джерело U),Данченко Денис
+FR-02,US-02 / AC-02-01,Shopping service / POST /lists/{list_id}/items,test_add_item_default_unpurchased,ЛР2–ЛР3,requirements.md / US-02; FR-02 (джерело U),Пархоменко Олександр
+FR-02,US-02 / AC-02-02,Shopping service / POST /lists/{list_id}/items,test_add_item_invalid_quantity_or_category,ЛР2–ЛР3,requirements.md / US-02; FR-02 (джерело U),Данченко Денис
+FR-02,US-02 / AC-02-03,Shopping service / POST /lists/{list_id}/items,test_add_item_quantity_boundaries,ЛР2–ЛР3,requirements.md / US-02; FR-02 (джерело U),Пархоменко Олександр
+FR-02,US-02 / AC-02-04,Shopping service / POST /lists/{list_id}/items,test_add_item_missing_list,ЛР2–ЛР3,requirements.md / US-02; FR-02 (джерело U),Данченко Денис
+FR-03,US-03 / AC-03-01,Shopping service / GET /lists; GET /lists/{list_id},test_read_lists_and_list_items_ordered,ЛР2–ЛР3,requirements.md / US-03; FR-03 (джерело U),Пархоменко Олександр
+FR-03,US-03 / AC-03-02,Shopping service / GET /lists; GET /lists/{list_id},test_read_empty_lists_and_items,ЛР2–ЛР3,requirements.md / US-03; FR-03 (джерело U),Данченко Денис
+FR-03,US-03 / AC-03-03,Shopping service / GET /lists; GET /lists/{list_id},test_read_missing_list,ЛР2–ЛР3,requirements.md / US-03; FR-03 (джерело U),Пархоменко Олександр
+FR-04,US-04 / AC-04-01,Shopping service / PATCH /lists/{list_id}/items/{item_id},test_patch_item_preserves_omitted_fields,ЛР2–ЛР3,requirements.md / US-04; FR-04 (джерело U),Данченко Денис
+FR-04,US-04 / AC-04-02,Shopping service / PATCH /lists/{list_id}/items/{item_id},test_patch_item_atomic_rejection,ЛР2–ЛР3,requirements.md / US-04; FR-04 (джерело U),Пархоменко Олександр
+FR-04,US-04 / AC-04-03,Shopping service / PATCH /lists/{list_id}/items/{item_id},test_patch_item_null_extra_and_empty,ЛР2–ЛР3,requirements.md / US-04; FR-04 (джерело U),Данченко Денис
+FR-04,US-04 / AC-04-04,Shopping service / PATCH /lists/{list_id}/items/{item_id},test_patch_item_wrong_list,ЛР2–ЛР3,requirements.md / US-04; FR-04 (джерело U),Пархоменко Олександр
+FR-04,US-04 / AC-04-05,Shopping service / PATCH /lists/{list_id}/items/{item_id},test_patch_quantity_unit_pair,ЛР2–ЛР3,requirements.md / US-04; FR-04 (джерело U),Данченко Денис
+FR-05,US-05 / AC-05-01,Shopping service / DELETE /lists/{list_id}/items/{item_id},test_delete_item_updates_statistics,ЛР2–ЛР3,requirements.md / US-05; FR-05 (джерело U),Пархоменко Олександр
+FR-05,US-05 / AC-05-02,Shopping service / DELETE /lists/{list_id}/items/{item_id},test_delete_missing_or_wrong_list_item,ЛР2–ЛР3,requirements.md / US-05; FR-05 (джерело U),Данченко Денис
+FR-06,US-06 / AC-06-01,Shopping service / PATCH /lists/{list_id}/items/{item_id}/purchase,test_purchase_forward_and_reverse,ЛР2–ЛР3,requirements.md / US-06; FR-06 (джерело U),Пархоменко Олександр
+FR-06,US-06 / AC-06-02,Shopping service / PATCH /lists/{list_id}/items/{item_id}/purchase,test_purchase_repeated_state_matrix,ЛР2–ЛР3,requirements.md / US-06; FR-06 (джерело U),Данченко Денис
+FR-06,US-06 / AC-06-03,Shopping service / PATCH /lists/{list_id}/items/{item_id}/purchase,test_purchase_invalid_types,ЛР2–ЛР3,requirements.md / US-06; FR-06 (джерело U),Пархоменко Олександр
+FR-07,US-07 / AC-07-01,Shopping service / GET /lists/{list_id},test_filter_category_purchase_and,ЛР2–ЛР3,requirements.md / US-07; FR-07 (джерело U),Данченко Денис
+FR-07,US-07 / AC-07-02,Shopping service / GET /lists/{list_id},test_filter_no_matches,ЛР2–ЛР3,requirements.md / US-07; FR-07 (джерело U),Пархоменко Олександр
+FR-07,US-07 / AC-07-03,Shopping service / GET /lists/{list_id},test_filter_invalid_and_repeated_query,ЛР2–ЛР3,requirements.md / US-07; FR-07 (джерело U),Данченко Денис
+FR-08,US-08 / AC-08-01,Shopping service / GET /lists/{list_id}/statistics,test_statistics_counts_positions_per_category,ЛР2–ЛР3,requirements.md / US-08; FR-08 (джерело U),Пархоменко Олександр
+FR-08,US-08 / AC-08-02,Shopping service / GET /lists/{list_id}/statistics,test_statistics_empty_list_all_categories,ЛР2–ЛР3,requirements.md / US-08; FR-08 (джерело U),Данченко Денис
+FR-08,US-08 / AC-08-03,Shopping service / GET /lists/{list_id}/statistics,test_statistics_after_changes_and_filters,ЛР2–ЛР3,requirements.md / US-08; FR-08 (джерело U),Пархоменко Олександр
+FR-08,US-08 / AC-08-04,Shopping service / GET /lists/{list_id}/statistics,test_statistics_missing_list,ЛР2–ЛР3,requirements.md / US-08; FR-08 (джерело U),Данченко Денис
+FR-09,US-09 / AC-09-01,Shopping service / POST /recommendations/category; POST /lists/{list_id}/items; PATCH /lists/{list_id}/items/{item_id},test_nlp_context_categories_no_write,ЛР4,requirements.md / US-09; FR-09 (джерело U),Пархоменко Олександр
+FR-09,US-09 / AC-09-02,Shopping service / POST /recommendations/category; POST /lists/{list_id}/items; PATCH /lists/{list_id}/items/{item_id},test_user_overrides_recommendation,ЛР4,requirements.md / US-09; FR-09 (джерело U),Данченко Денис
+FR-09,US-09 / AC-09-03,Shopping service / POST /recommendations/category; POST /lists/{list_id}/items; PATCH /lists/{list_id}/items/{item_id},test_recommendation_ambiguity_and_unavailable,ЛР4,requirements.md / US-09; FR-09 (джерело U),Пархоменко Олександр
+FR-09,US-09 / AC-09-04,Shopping service / POST /recommendations/category; POST /lists/{list_id}/items; PATCH /lists/{list_id}/items/{item_id},test_nlp_baseline_same_frozen_test_set,ЛР4,requirements.md / US-09; FR-09 (джерело U),Данченко Денис
