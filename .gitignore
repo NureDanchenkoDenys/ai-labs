@@ -1,0 +1,28 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test and linter caches
+.pytest_cache/
+.ruff_cache/
+
+# Local SQLite databases
+database.db
+database.db-wal
+database.db-shm
+*.sqlite3
+
+# Local environment variables
+.env
+.env.*
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
