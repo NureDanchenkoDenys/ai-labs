@@ -122,3 +122,30 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
                 "INSERT OR IGNORE INTO categories (id, name, description) VALUES (?, ?, ?)",
                 CATEGORIES,
             )
+
+
+def insert_shopping_list(
+    db_path: str | Path,
+    name: str,
+    created_at: str,
+) -> dict[str, int | str]:
+    with closing(get_connection(db_path)) as conn:
+        with conn:
+            cursor = conn.execute(
+                "INSERT INTO shopping_lists (name, created_at) VALUES (?, ?)",
+                (name, created_at),
+            )
+            list_id = cursor.lastrowid
+            if list_id is None:
+                raise RuntimeError("Не вдалося отримати ідентифікатор створеного списку.")
+            row = conn.execute(
+                "SELECT id, name, created_at FROM shopping_lists WHERE id = ?",
+                (list_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Створений список не знайдено після збереження.")
+    return {
+        "id": int(row["id"]),
+        "name": str(row["name"]),
+        "created_at": str(row["created_at"]),
+    }

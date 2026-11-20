@@ -1,12 +1,17 @@
-from collections.abc import AsyncIterator
+import json
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from app.db import DEFAULT_DB_PATH, init_db
+from app.schemas import ShoppingListCreate, ShoppingListResponse
+from app.services import create_shopping_list
 
 
 def error_response(
@@ -25,6 +30,35 @@ def error_response(
             }
         },
     )
+
+
+def _unexpected_query_fields(request: Request) -> list[dict[str, str]]:
+    return [
+        {
+            "field": f"query.{key}",
+            "message": "Маршрут не приймає query-параметрів.",
+        }
+        for key, _ in request.query_params.multi_items()
+    ]
+
+
+def _format_validation_fields(
+    errors: Sequence[Mapping[str, Any]],
+    prefix: tuple[str, ...] = (),
+) -> list[dict[str, str]]:
+    fields: list[dict[str, str]] = []
+    for err in errors:
+        loc = (*prefix, *(str(part) for part in err.get("loc", ())))
+        msg = str(err.get("msg", "Некоректне значення."))
+        if msg.startswith("Value error, "):
+            msg = msg.removeprefix("Value error, ")
+        fields.append(
+            {
+                "field": ".".join(loc) if loc else "body",
+                "message": msg,
+            }
+        )
+    return fields
 
 
 def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
@@ -46,18 +80,11 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         request: Request,
         exc: RequestValidationError,
     ) -> JSONResponse:
-        fields = [
-            {
-                "field": ".".join(str(part) for part in err.get("loc", ())),
-                "message": str(err.get("msg", "Некоректне значення.")),
-            }
-            for err in exc.errors()
-        ]
         return error_response(
             status_code=422,
             code="validation_error",
             message="Некоректні вхідні дані.",
-            fields=fields,
+            fields=_format_validation_fields(exc.errors()),
         )
 
     @application.exception_handler(Exception)
@@ -73,14 +100,7 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
 
     @application.get("/health")
     async def health(request: Request) -> JSONResponse:
-        fields: list[dict[str, str]] = []
-        for key in request.query_params.keys():
-            fields.append(
-                {
-                    "field": f"query.{key}",
-                    "message": "Маршрут не приймає query-параметрів.",
-                }
-            )
+        fields = _unexpected_query_fields(request)
         if await request.body():
             fields.append(
                 {
@@ -96,6 +116,97 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
                 fields=fields,
             )
         return JSONResponse(status_code=200, content={"status": "ok"})
+
+    @application.post(
+        "/lists",
+        status_code=201,
+        response_model=ShoppingListResponse,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": ShoppingListCreate.model_json_schema()
+                    }
+                },
+            }
+        },
+    )
+    async def post_list(request: Request) -> ShoppingListResponse | JSONResponse:
+        raw_body = await request.body()
+        content_type_header = request.headers.get("content-type", "")
+        media_type = content_type_header.split(";", 1)[0].strip().lower()
+
+        if media_type != "application/json" and (
+            bool(content_type_header) or bool(raw_body)
+        ):
+            return error_response(
+                status_code=415,
+                code="unsupported_media_type",
+                message="Очікується Content-Type: application/json.",
+            )
+
+        query_fields = _unexpected_query_fields(request)
+        if query_fields:
+            return error_response(
+                status_code=422,
+                code="validation_error",
+                message="Зайві вхідні дані для POST /lists.",
+                fields=query_fields,
+            )
+
+        if not raw_body:
+            return error_response(
+                status_code=422,
+                code="validation_error",
+                message="Тіло запиту є обов’язковим.",
+                fields=[
+                    {
+                        "field": "body",
+                        "message": "Передайте JSON-об’єкт із полем name.",
+                    }
+                ],
+            )
+
+        try:
+            body_data = json.loads(raw_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return error_response(
+                status_code=422,
+                code="validation_error",
+                message="Некоректний JSON у тілі запиту.",
+                fields=[
+                    {
+                        "field": "body",
+                        "message": "Тіло запиту має бути коректним JSON-об’єктом.",
+                    }
+                ],
+            )
+
+        if not isinstance(body_data, dict):
+            return error_response(
+                status_code=422,
+                code="validation_error",
+                message="Тіло запиту має бути JSON-об’єктом.",
+                fields=[
+                    {
+                        "field": "body",
+                        "message": "Очікується JSON-об’єкт.",
+                    }
+                ],
+            )
+
+        try:
+            payload = ShoppingListCreate.model_validate(body_data)
+        except ValidationError as exc:
+            return error_response(
+                status_code=422,
+                code="validation_error",
+                message="Некоректні вхідні дані для створення списку.",
+                fields=_format_validation_fields(exc.errors(), prefix=("body",)),
+            )
+
+        return create_shopping_list(request.app.state.db_path, payload)
 
     return application
 
