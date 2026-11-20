@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.db import get_connection
+from app.main import create_app
 
 
 def _fetch_all_lists(db_path: Path) -> list[dict[str, int | str]]:
@@ -234,3 +235,20 @@ def test_create_list_allows_charset_and_duplicate_names_isolated_from_working_db
     persisted = _fetch_all_lists(db_path)
     assert len(persisted) == 2
     assert _file_sha256(working_db) == before_hash
+
+
+@pytest.mark.parametrize("name", ["\u0000", "\u0000abc"])
+def test_create_list_allows_nul_character_in_name(
+    db_path: Path,
+    name: str,
+) -> None:
+    application = create_app(db_path)
+    with TestClient(application, raise_server_exceptions=False) as no_raise_client:
+        response = no_raise_client.post("/lists", json={"name": name})
+
+    assert response.status_code == 201, (
+        f"Actual status={response.status_code}, body={response.text}"
+    )
+    body = response.json()
+    assert body["name"] == name
+    assert _fetch_all_lists(db_path) == [body]

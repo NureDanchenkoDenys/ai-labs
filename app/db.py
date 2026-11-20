@@ -74,7 +74,7 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS shopping_lists (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
+        name TEXT NOT NULL CHECK (length(CAST(name AS BLOB)) BETWEEN 1 AND 480),
         created_at TEXT NOT NULL
     )
     """,
@@ -82,7 +82,7 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE TABLE IF NOT EXISTS shopping_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         list_id INTEGER NOT NULL REFERENCES shopping_lists(id),
-        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 160),
+        name TEXT NOT NULL CHECK (length(CAST(name AS BLOB)) BETWEEN 1 AND 640),
         quantity_milli INTEGER NOT NULL CHECK (quantity_milli BETWEEN 1 AND 10000000),
         unit TEXT NOT NULL CHECK (unit IN ('шт', 'кг', 'г', 'л', 'мл', 'уп')),
         category_id INTEGER NOT NULL REFERENCES categories(id),
