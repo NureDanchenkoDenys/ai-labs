@@ -1,8 +1,20 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.db import insert_shopping_list
-from app.schemas import ShoppingListCreate, ShoppingListResponse
+from app.db import CATEGORIES, fetch_categories, insert_shopping_list
+from app.schemas import CategoryResponse, ShoppingListCreate, ShoppingListResponse
+
+
+def list_categories(db_path: str | Path) -> list[CategoryResponse]:
+    records = fetch_categories(db_path=db_path)
+    actual_catalog = tuple(
+        (record["id"], record["name"], record["description"]) for record in records
+    )
+    if actual_catalog != CATEGORIES:
+        raise RuntimeError(
+            "Довідник категорій у БД не відповідає нормативному переліку."
+        )
+    return [CategoryResponse.model_validate(record) for record in records]
 
 
 def utc_now_iso() -> str:

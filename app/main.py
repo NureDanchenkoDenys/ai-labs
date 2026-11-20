@@ -10,8 +10,8 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from app.db import DEFAULT_DB_PATH, init_db
-from app.schemas import ShoppingListCreate, ShoppingListResponse
-from app.services import create_shopping_list
+from app.schemas import CategoryResponse, ShoppingListCreate, ShoppingListResponse
+from app.services import create_shopping_list, list_categories
 
 
 def error_response(
@@ -40,6 +40,28 @@ def _unexpected_query_fields(request: Request) -> list[dict[str, str]]:
         }
         for key, _ in request.query_params.multi_items()
     ]
+
+
+async def _unexpected_get_input_response(
+    request: Request,
+    route_label: str,
+) -> JSONResponse | None:
+    fields = _unexpected_query_fields(request)
+    if await request.body():
+        fields.append(
+            {
+                "field": "body",
+                "message": "GET-запит не приймає тіло.",
+            }
+        )
+    if fields:
+        return error_response(
+            status_code=422,
+            code="validation_error",
+            message=f"Зайві вхідні дані для {route_label}.",
+            fields=fields,
+        )
+    return None
 
 
 def _format_validation_fields(
@@ -100,22 +122,26 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
 
     @application.get("/health")
     async def health(request: Request) -> JSONResponse:
-        fields = _unexpected_query_fields(request)
-        if await request.body():
-            fields.append(
-                {
-                    "field": "body",
-                    "message": "GET-запит не приймає тіло.",
-                }
-            )
-        if fields:
-            return error_response(
-                status_code=422,
-                code="validation_error",
-                message="Зайві вхідні дані для GET /health.",
-                fields=fields,
-            )
+        invalid_input = await _unexpected_get_input_response(request, "GET /health")
+        if invalid_input is not None:
+            return invalid_input
         return JSONResponse(status_code=200, content={"status": "ok"})
+
+    @application.get(
+        "/categories",
+        status_code=200,
+        response_model=list[CategoryResponse],
+    )
+    async def get_categories(
+        request: Request,
+    ) -> list[CategoryResponse] | JSONResponse:
+        invalid_input = await _unexpected_get_input_response(
+            request,
+            "GET /categories",
+        )
+        if invalid_input is not None:
+            return invalid_input
+        return list_categories(request.app.state.db_path)
 
     @application.post(
         "/lists",

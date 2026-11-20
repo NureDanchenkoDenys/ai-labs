@@ -1,6 +1,14 @@
 from pydantic import BaseModel, ConfigDict, field_validator
 
 
+class CategoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    name: str
+    description: str
+
+
 class ShoppingListCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 

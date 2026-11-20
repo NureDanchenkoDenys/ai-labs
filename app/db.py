@@ -124,6 +124,23 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
             )
 
 
+def fetch_categories(
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> list[dict[str, int | str]]:
+    with closing(get_connection(db_path)) as conn:
+        rows = conn.execute(
+            "SELECT id, name, description FROM categories ORDER BY id ASC"
+        ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "name": str(row["name"]),
+            "description": str(row["description"]),
+        }
+        for row in rows
+    ]
+
+
 def insert_shopping_list(
     db_path: str | Path,
     name: str,
