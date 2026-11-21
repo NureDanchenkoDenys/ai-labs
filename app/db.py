@@ -193,6 +193,103 @@ def _milli_to_quantity(quantity_milli: int) -> int | float:
     return float(Decimal(quantity_milli) / Decimal(1000))
 
 
+def _row_to_shopping_item(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "list_id": int(row["list_id"]),
+        "name": str(row["name"]),
+        "quantity": _milli_to_quantity(int(row["quantity_milli"])),
+        "unit": str(row["unit"]),
+        "category_id": int(row["category_id"]),
+        "is_purchased": bool(int(row["is_purchased"])),
+        "created_at": str(row["created_at"]),
+    }
+
+
+def shopping_list_exists(
+    db_path: str | Path,
+    list_id: int,
+) -> bool:
+    with closing(get_connection(db_path)) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM shopping_lists WHERE id = ?",
+            (list_id,),
+        ).fetchone()
+    return row is not None
+
+
+def insert_shopping_item(
+    db_path: str | Path,
+    list_id: int,
+    name: str,
+    quantity_milli: int,
+    unit: str,
+    category_id: int,
+    created_at: str,
+) -> tuple[str, dict[str, Any] | None]:
+    with closing(get_connection(db_path)) as conn:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+
+            list_row = conn.execute(
+                "SELECT 1 FROM shopping_lists WHERE id = ?",
+                (list_id,),
+            ).fetchone()
+            if list_row is None:
+                conn.rollback()
+                return ("list_not_found", None)
+
+            category_row = conn.execute(
+                "SELECT 1 FROM categories WHERE id = ?",
+                (category_id,),
+            ).fetchone()
+            if category_row is None:
+                conn.rollback()
+                return ("category_not_found", None)
+
+            cursor = conn.execute(
+                """
+                INSERT INTO shopping_items (
+                    list_id,
+                    name,
+                    quantity_milli,
+                    unit,
+                    category_id,
+                    is_purchased,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, 0, ?)
+                """,
+                (list_id, name, quantity_milli, unit, category_id, created_at),
+            )
+            item_id = cursor.lastrowid
+            if item_id is None:
+                raise RuntimeError(
+                    "Не вдалося отримати ідентифікатор створеної позиції."
+                )
+
+            row = conn.execute(
+                """
+                SELECT
+                    id,
+                    list_id,
+                    name,
+                    quantity_milli,
+                    unit,
+                    category_id,
+                    is_purchased,
+                    created_at
+                FROM shopping_items
+                WHERE id = ?
+                """,
+                (item_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Створену позицію не знайдено після збереження.")
+
+    return ("created", _row_to_shopping_item(row))
+
+
 def fetch_shopping_list_with_items(
     db_path: str | Path,
     list_id: int,
@@ -227,17 +324,5 @@ def fetch_shopping_list_with_items(
         "id": int(list_row["id"]),
         "name": str(list_row["name"]),
         "created_at": str(list_row["created_at"]),
-        "items": [
-            {
-                "id": int(row["id"]),
-                "list_id": int(row["list_id"]),
-                "name": str(row["name"]),
-                "quantity": _milli_to_quantity(int(row["quantity_milli"])),
-                "unit": str(row["unit"]),
-                "category_id": int(row["category_id"]),
-                "is_purchased": bool(int(row["is_purchased"])),
-                "created_at": str(row["created_at"]),
-            }
-            for row in item_rows
-        ],
+        "items": [_row_to_shopping_item(row) for row in item_rows],
     }
