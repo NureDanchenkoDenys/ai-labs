@@ -1255,3 +1255,485 @@ def test_delete_missing_or_wrong_list_item(
     # Після rollback позиція залишилася в списку Б без змін.
     assert _get_item(client, list_b, item_b_id) == item_b
     assert _count_list_items_in_db(db_path, list_b) == 1
+
+
+def _fetch_is_purchased(db_path: Path, item_id: int) -> int:
+    with closing(sqlite3.connect(db_path)) as conn:
+        row = conn.execute(
+            "SELECT is_purchased FROM shopping_items WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_purchase_forward_and_reverse(
+    client: TestClient,
+    db_path: Path,
+) -> None:
+    list_a = _create_list(client, name="На тиждень")
+    list_b = _create_list(client, name="Інший список")
+
+    item_primary = _create_item(
+        client,
+        list_a,
+        name="Томати",
+        quantity=1.5,
+        unit="кг",
+        category_id=2,
+    )
+    item_sibling = _create_item(
+        client,
+        list_a,
+        name="Молоко",
+        quantity=2,
+        unit="л",
+        category_id=1,
+    )
+    item_other = _create_item(
+        client,
+        list_b,
+        name="Хліб",
+        quantity=1,
+        unit="шт",
+        category_id=5,
+    )
+    primary_id = int(item_primary["id"])
+    sibling_id = int(item_sibling["id"])
+    other_id = int(item_other["id"])
+
+    assert item_primary["is_purchased"] is False
+    assert _fetch_is_purchased(db_path, primary_id) == 0
+
+    # AC-06-01: перехід false -> true; усі інші поля та сусідні позиції без змін.
+    resp_true = client.patch(
+        f"/lists/{list_a}/items/{primary_id}/purchase",
+        json={"is_purchased": True},
+    )
+    assert resp_true.status_code == 200
+    purchased_state = resp_true.json()
+    assert set(purchased_state.keys()) == {
+        "id",
+        "list_id",
+        "name",
+        "quantity",
+        "unit",
+        "category_id",
+        "is_purchased",
+        "created_at",
+    }
+    assert purchased_state == {**item_primary, "is_purchased": True}
+    assert purchased_state["is_purchased"] is True
+    assert purchased_state["created_at"] == item_primary["created_at"]
+    assert _fetch_is_purchased(db_path, primary_id) == 1
+    assert _get_item(client, list_a, primary_id) == purchased_state
+    assert _get_item(client, list_a, sibling_id) == item_sibling
+    assert _get_item(client, list_b, other_id) == item_other
+
+    # AC-06-01 / BR-02: зворотний перехід true -> false.
+    resp_false = client.patch(
+        f"/lists/{list_a}/items/{primary_id}/purchase",
+        json={"is_purchased": False},
+    )
+    assert resp_false.status_code == 200
+    unpurchased_state = resp_false.json()
+    assert unpurchased_state == item_primary
+    assert unpurchased_state["is_purchased"] is False
+    assert _fetch_is_purchased(db_path, primary_id) == 0
+    assert _get_item(client, list_a, primary_id) == item_primary
+    assert _get_item(client, list_a, sibling_id) == item_sibling
+    assert _get_item(client, list_b, other_id) == item_other
+
+    # Повторне перемикання false -> true із charset у Content-Type та сумісність із PATCH позиції.
+    resp_again_true = client.patch(
+        f"/lists/{list_a}/items/{primary_id}/purchase",
+        content=b'{"is_purchased": true}',
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
+    assert resp_again_true.status_code == 200
+    assert resp_again_true.json() == purchased_state
+    assert _fetch_is_purchased(db_path, primary_id) == 1
+
+    resp_edit = client.patch(
+        f"/lists/{list_a}/items/{primary_id}",
+        json={"name": "Томати чері"},
+    )
+    assert resp_edit.status_code == 200
+    assert resp_edit.json()["is_purchased"] is True
+    assert resp_edit.json()["name"] == "Томати чері"
+    assert _get_item(client, list_a, sibling_id) == item_sibling
+    assert _get_item(client, list_b, other_id) == item_other
+
+    # OpenAPI-контракт API-09: обов’язкове boolean-поле is_purchased без зайвих полів і null.
+    openapi_resp = client.get("/openapi.json")
+    assert openapi_resp.status_code == 200
+    purchase_spec = openapi_resp.json()["paths"][
+        "/lists/{list_id}/items/{item_id}/purchase"
+    ]["patch"]
+    assert purchase_spec["requestBody"]["required"] is True
+    body_schema = purchase_spec["requestBody"]["content"]["application/json"]["schema"]
+    assert body_schema["additionalProperties"] is False
+    assert body_schema["required"] == ["is_purchased"]
+    props = body_schema["properties"]
+    assert set(props.keys()) == {"is_purchased"}
+    assert props["is_purchased"]["type"] == "boolean"
+    assert "anyOf" not in props["is_purchased"]
+    assert "default" not in props["is_purchased"]
+
+
+def test_purchase_repeated_state_matrix(
+    client: TestClient,
+    db_path: Path,
+) -> None:
+    list_id = _create_list(client, name="На тиждень")
+    original = _create_item(
+        client,
+        list_id,
+        name="Молоко",
+        quantity=2,
+        unit="л",
+        category_id=1,
+    )
+    item_id = int(original["id"])
+
+    # AC-06-02 / BR-02: повна матриця 2x2 (false->false, false->true, true->true, true->false).
+    for target_state in (False, True, True, False):
+        resp = client.patch(
+            f"/lists/{list_id}/items/{item_id}/purchase",
+            json={"is_purchased": target_state},
+        )
+        assert resp.status_code == 200
+        expected = {**original, "is_purchased": target_state}
+        body = resp.json()
+        assert body == expected
+        assert body["created_at"] == original["created_at"]
+        assert type(body["quantity"]) is int
+        assert _count_list_items_in_db(db_path, list_id) == 1
+        assert _fetch_is_purchased(db_path, item_id) == (1 if target_state else 0)
+        assert _get_item(client, list_id, item_id) == expected
+
+    # Повторне встановлення того самого стану не виконує зайвий SQL UPDATE (false->false і true->true).
+    with closing(sqlite3.connect(db_path)) as conn:
+        with conn:
+            conn.execute(
+                """
+                CREATE TRIGGER fail_on_redundant_purchase_update
+                AFTER UPDATE ON shopping_items
+                BEGIN
+                    SELECT RAISE(ABORT, 'unexpected_sql_update');
+                END
+                """
+            )
+    try:
+        resp_noop_false = client.patch(
+            f"/lists/{list_id}/items/{item_id}/purchase",
+            json={"is_purchased": False},
+        )
+        assert resp_noop_false.status_code == 200
+        assert resp_noop_false.json() == original
+        assert _count_list_items_in_db(db_path, list_id) == 1
+    finally:
+        with closing(sqlite3.connect(db_path)) as conn:
+            with conn:
+                conn.execute(
+                    "DROP TRIGGER IF EXISTS fail_on_redundant_purchase_update"
+                )
+
+    resp_to_true = client.patch(
+        f"/lists/{list_id}/items/{item_id}/purchase",
+        json={"is_purchased": True},
+    )
+    assert resp_to_true.status_code == 200
+    expected_true = {**original, "is_purchased": True}
+    assert resp_to_true.json() == expected_true
+
+    with closing(sqlite3.connect(db_path)) as conn:
+        with conn:
+            conn.execute(
+                """
+                CREATE TRIGGER fail_on_redundant_purchase_update
+                AFTER UPDATE ON shopping_items
+                BEGIN
+                    SELECT RAISE(ABORT, 'unexpected_sql_update');
+                END
+                """
+            )
+    try:
+        resp_noop_true = client.patch(
+            f"/lists/{list_id}/items/{item_id}/purchase",
+            json={"is_purchased": True},
+        )
+        assert resp_noop_true.status_code == 200
+        assert resp_noop_true.json() == expected_true
+        assert _count_list_items_in_db(db_path, list_id) == 1
+    finally:
+        with closing(sqlite3.connect(db_path)) as conn:
+            with conn:
+                conn.execute(
+                    "DROP TRIGGER IF EXISTS fail_on_redundant_purchase_update"
+                )
+
+
+def test_purchase_invalid_types(
+    client: TestClient,
+    db_path: Path,
+) -> None:
+    list_a = _create_list(client, name="Список А")
+    list_b = _create_list(client, name="Список Б")
+    item_a = _create_item(
+        client,
+        list_a,
+        name="Молоко",
+        quantity=2,
+        unit="л",
+        category_id=1,
+    )
+    item_b = _create_item(
+        client,
+        list_b,
+        name="Хліб",
+        quantity=1,
+        unit="шт",
+        category_id=5,
+    )
+    item_a_id = int(item_a["id"])
+    item_b_id = int(item_b["id"])
+    target_a = f"/lists/{list_a}/items/{item_a_id}/purchase"
+
+    # AC-06-03: некоректні типи для is_purchased (null, рядки, числа, колекції) -> 422.
+    for bad_value in (
+        None,
+        "true",
+        "false",
+        "True",
+        "1",
+        "0",
+        1,
+        0,
+        1.0,
+        0.0,
+        [],
+        {},
+    ):
+        resp_bad_type = client.patch(target_a, json={"is_purchased": bad_value})
+        _assert_error(
+            resp_bad_type,
+            422,
+            "validation_error",
+            field="body.is_purchased",
+        )
+
+    # Відсутнє обов’язкове поле is_purchased ({}) -> 422.
+    resp_empty_obj = client.patch(target_a, json={})
+    _assert_error(
+        resp_empty_obj,
+        422,
+        "validation_error",
+        field="body.is_purchased",
+    )
+
+    # Заборонені системні, товарні, невідомі та регістро-некоректні поля -> 422.
+    for forbidden_key, forbidden_value in (
+        ("id", item_a_id),
+        ("list_id", list_a),
+        ("name", "Нова назва"),
+        ("quantity", 3),
+        ("unit", "л"),
+        ("category_id", 2),
+        ("created_at", "2026-11-19T16:01:00Z"),
+        ("unknown", "x"),
+        ("Is_purchased", True),
+        ("IS_PURCHASED", True),
+    ):
+        resp_with_extra = client.patch(
+            target_a,
+            json={"is_purchased": True, forbidden_key: forbidden_value},
+        )
+        _assert_error(
+            resp_with_extra,
+            422,
+            "validation_error",
+            field=f"body.{forbidden_key}",
+        )
+
+    for wrong_case_key in ("Is_purchased", "IS_PURCHASED"):
+        resp_wrong_case = client.patch(target_a, json={wrong_case_key: True})
+        _assert_error(
+            resp_wrong_case,
+            422,
+            "validation_error",
+            field=f"body.{wrong_case_key}",
+        )
+
+    # Відсутній body, битий JSON, не-об’єктний JSON та NaN/Infinity -> 422.
+    for raw_body in (
+        b"",
+        b"{not-json}",
+        b"[]",
+        b"true",
+        b"false",
+        b"null",
+        b'"true"',
+        b"123",
+        b'{"is_purchased": NaN}',
+        b'{"is_purchased": Infinity}',
+        b'{"is_purchased": -Infinity}',
+    ):
+        resp_bad_body = client.patch(
+            target_a,
+            content=raw_body,
+            headers={"Content-Type": "application/json"},
+        )
+        _assert_error(resp_bad_body, 422, "validation_error", field="body")
+
+    # Непідтримуваний Content-Type та непорожнє тіло без Content-Type -> 415.
+    for bad_headers in ({"Content-Type": "text/plain"}, {}):
+        resp_415 = client.patch(
+            target_a,
+            content=b'{"is_purchased": true}',
+            headers=bad_headers,
+        )
+        detail_415 = _assert_error(resp_415, 415, "unsupported_media_type")
+        assert detail_415["fields"] == []
+
+    # Зайві та повторені query-параметри -> 422.
+    resp_query = client.patch(f"{target_a}?extra=1", json={"is_purchased": True})
+    _assert_error(resp_query, 422, "validation_error", field="query.extra")
+
+    resp_repeated_query = client.patch(
+        f"{target_a}?a=1&a=2",
+        json={"is_purchased": True},
+    )
+    _assert_error(resp_repeated_query, 422, "validation_error", field="query.a")
+
+    # Невалідні path-параметри -> 422.
+    for bad_id in ("0", "-1", "2147483648", "abc"):
+        resp_bad_list = client.patch(
+            f"/lists/{bad_id}/items/{item_a_id}/purchase",
+            json={"is_purchased": True},
+        )
+        _assert_error(resp_bad_list, 422, "validation_error", field="path.list_id")
+
+        resp_bad_item = client.patch(
+            f"/lists/{list_a}/items/{bad_id}/purchase",
+            json={"is_purchased": True},
+        )
+        _assert_error(resp_bad_item, 422, "validation_error", field="path.item_id")
+
+        resp_bad_item_missing_list = client.patch(
+            f"/lists/999/items/{bad_id}/purchase",
+            json={"is_purchased": True},
+        )
+        _assert_error(
+            resp_bad_item_missing_list,
+            422,
+            "validation_error",
+            field="path.item_id",
+        )
+
+    # Відсутня позиція, чужа позиція та вже видалена позиція -> 404 item_not_found.
+    resp_missing_item = client.patch(
+        f"/lists/{list_a}/items/999999/purchase",
+        json={"is_purchased": True},
+    )
+    detail_missing_item = _assert_error(resp_missing_item, 404, "item_not_found")
+    assert detail_missing_item["fields"] == []
+
+    resp_wrong_list = client.patch(
+        f"/lists/{list_a}/items/{item_b_id}/purchase",
+        json={"is_purchased": True},
+    )
+    detail_wrong_list = _assert_error(resp_wrong_list, 404, "item_not_found")
+    assert detail_wrong_list["fields"] == []
+
+    temp_item = _create_item(
+        client,
+        list_a,
+        name="Тимчасовий товар",
+        quantity=1,
+        unit="шт",
+        category_id=1,
+    )
+    temp_item_id = int(temp_item["id"])
+    assert client.delete(f"/lists/{list_a}/items/{temp_item_id}").status_code == 204
+    resp_deleted_item = client.patch(
+        f"/lists/{list_a}/items/{temp_item_id}/purchase",
+        json={"is_purchased": True},
+    )
+    detail_deleted = _assert_error(resp_deleted_item, 404, "item_not_found")
+    assert detail_deleted["fields"] == []
+
+    # Відсутній список -> 404 list_not_found (навіть для наявного item_id іншого списку).
+    for target_item_id in (item_b_id, 999999):
+        resp_missing_list = client.patch(
+            f"/lists/999/items/{target_item_id}/purchase",
+            json={"is_purchased": True},
+        )
+        detail_missing_list = _assert_error(resp_missing_list, 404, "list_not_found")
+        assert detail_missing_list["fields"] == []
+
+    # BR-06: крок 1 (структурні помилки, query, 415) має пріоритет над кроком 2 (404).
+    for missing_or_wrong_url in (
+        f"/lists/999/items/{item_b_id}/purchase",
+        f"/lists/{list_a}/items/{item_b_id}/purchase",
+    ):
+        for bad_payload, expected_field in (
+            ({}, "body.is_purchased"),
+            ({"is_purchased": "true"}, "body.is_purchased"),
+            ({"is_purchased": None}, "body.is_purchased"),
+            ({"is_purchased": True, "unknown": 1}, "body.unknown"),
+        ):
+            resp_struct = client.patch(missing_or_wrong_url, json=bad_payload)
+            _assert_error(resp_struct, 422, "validation_error", field=expected_field)
+
+        resp_struct_query = client.patch(
+            f"{missing_or_wrong_url}?extra=1",
+            json={"is_purchased": True},
+        )
+        _assert_error(resp_struct_query, 422, "validation_error", field="query.extra")
+
+        resp_struct_415 = client.patch(
+            missing_or_wrong_url,
+            content=b'{"is_purchased": true}',
+            headers={"Content-Type": "text/plain"},
+        )
+        _assert_error(resp_struct_415, 415, "unsupported_media_type")
+
+    # Жодна некоректна спроба не змінила позиції А і Б.
+    assert _get_item(client, list_a, item_a_id) == item_a
+    assert _get_item(client, list_b, item_b_id) == item_b
+
+    # Аварійна помилка БД під час UPDATE -> 500 internal_error та повний rollback без витоку деталей.
+    with closing(sqlite3.connect(db_path)) as conn:
+        with conn:
+            conn.execute(
+                """
+                CREATE TRIGGER fail_after_item_purchase_update
+                AFTER UPDATE ON shopping_items
+                BEGIN
+                    SELECT RAISE(ABORT, 'simulated_purchase_failure');
+                END
+                """
+            )
+    try:
+        with TestClient(
+            create_app(db_path),
+            raise_server_exceptions=False,
+        ) as no_raise_client:
+            resp_500 = no_raise_client.patch(
+                target_a,
+                json={"is_purchased": True},
+            )
+        detail_500 = _assert_error(resp_500, 500, "internal_error")
+        assert detail_500["fields"] == []
+        assert "simulated_purchase_failure" not in detail_500["message"]
+    finally:
+        with closing(sqlite3.connect(db_path)) as conn:
+            with conn:
+                conn.execute(
+                    "DROP TRIGGER IF EXISTS fail_after_item_purchase_update"
+                )
+
+    assert _get_item(client, list_a, item_a_id) == item_a
+    assert _fetch_is_purchased(db_path, item_a_id) == 0
+    assert _get_item(client, list_b, item_b_id) == item_b

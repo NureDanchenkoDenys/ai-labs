@@ -200,6 +200,12 @@ class ShoppingItemUpdate(BaseModel):
         return quantity_to_milli(self.quantity)
 
 
+class ShoppingItemPurchaseUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    is_purchased: bool
+
+
 class ShoppingItemResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

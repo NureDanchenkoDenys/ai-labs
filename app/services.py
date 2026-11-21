@@ -14,12 +14,14 @@ from app.db import (
     shopping_list_exists,
     shopping_list_exists_in_tx,
     update_shopping_item_in_tx,
+    update_shopping_item_purchase_in_tx,
     write_transaction,
 )
 from app.schemas import (
     INTEGER_ONLY_UNITS,
     CategoryResponse,
     ShoppingItemCreate,
+    ShoppingItemPurchaseUpdate,
     ShoppingItemResponse,
     ShoppingItemUpdate,
     ShoppingListCreate,
@@ -244,3 +246,31 @@ def delete_shopping_item(
         )
         if not deleted:
             raise ItemNotFoundError(list_id=list_id, item_id=item_id)
+
+
+def update_shopping_item_purchase(
+    db_path: str | Path,
+    list_id: int,
+    item_id: int,
+    payload: ShoppingItemPurchaseUpdate,
+) -> ShoppingItemResponse:
+    with write_transaction(db_path) as conn:
+        if not shopping_list_exists_in_tx(conn, list_id):
+            raise ListNotFoundError(list_id)
+
+        found = fetch_shopping_item_in_tx(conn, list_id=list_id, item_id=item_id)
+        if found is None:
+            raise ItemNotFoundError(list_id=list_id, item_id=item_id)
+
+        current_item, _ = found
+        if current_item["is_purchased"] is payload.is_purchased:
+            return ShoppingItemResponse.model_validate(current_item)
+
+        updated = update_shopping_item_purchase_in_tx(
+            conn=conn,
+            list_id=list_id,
+            item_id=item_id,
+            is_purchased=payload.is_purchased,
+        )
+
+    return ShoppingItemResponse.model_validate(updated)

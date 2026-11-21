@@ -445,3 +445,41 @@ def delete_shopping_item_in_tx(
     if cursor.rowcount > 1:
         raise RuntimeError("Очікувалося видалення не більше однієї позиції.")
     return cursor.rowcount == 1
+
+
+def update_shopping_item_purchase_in_tx(
+    conn: sqlite3.Connection,
+    list_id: int,
+    item_id: int,
+    is_purchased: bool,
+) -> dict[str, Any]:
+    cursor = conn.execute(
+        """
+        UPDATE shopping_items
+        SET is_purchased = ?
+        WHERE id = ? AND list_id = ?
+        """,
+        (1 if is_purchased else 0, item_id, list_id),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError("Оновлювану позицію не знайдено під час збереження.")
+
+    row = conn.execute(
+        """
+        SELECT
+            id,
+            list_id,
+            name,
+            quantity_milli,
+            unit,
+            category_id,
+            is_purchased,
+            created_at
+        FROM shopping_items
+        WHERE id = ? AND list_id = ?
+        """,
+        (item_id, list_id),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("Оновлену позицію не знайдено після збереження.")
+    return _row_to_shopping_item(row)

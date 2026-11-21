@@ -15,6 +15,7 @@ from app.db import DEFAULT_DB_PATH, init_db
 from app.schemas import (
     CategoryResponse,
     ShoppingItemCreate,
+    ShoppingItemPurchaseUpdate,
     ShoppingItemResponse,
     ShoppingItemUpdate,
     ShoppingListCreate,
@@ -33,6 +34,7 @@ from app.services import (
     list_categories,
     list_shopping_lists,
     update_shopping_item,
+    update_shopping_item_purchase,
 )
 
 
@@ -508,6 +510,53 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             item_id,
         )
         return Response(status_code=204)
+
+    @application.patch(
+        "/lists/{list_id}/items/{item_id}/purchase",
+        status_code=200,
+        response_model=ShoppingItemResponse,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": ShoppingItemPurchaseUpdate.model_json_schema()
+                    }
+                },
+            }
+        },
+    )
+    async def patch_list_item_purchase(
+        list_id: Annotated[int, PathParam(ge=1, le=2147483647)],
+        item_id: Annotated[int, PathParam(ge=1, le=2147483647)],
+        request: Request,
+    ) -> ShoppingItemResponse | JSONResponse:
+        body_data, error = await _parse_json_object_body(
+            request=request,
+            route_label="PATCH /lists/{list_id}/items/{item_id}/purchase",
+            empty_body_message=(
+                "Передайте JSON-об’єкт із обов’язковим boolean-полем is_purchased."
+            ),
+        )
+        if error is not None:
+            return error
+
+        try:
+            payload = ShoppingItemPurchaseUpdate.model_validate(body_data)
+        except ValidationError as exc:
+            return error_response(
+                status_code=422,
+                code="validation_error",
+                message="Некоректні вхідні дані для зміни стану придбання.",
+                fields=_format_validation_fields(exc.errors(), prefix=("body",)),
+            )
+
+        return update_shopping_item_purchase(
+            request.app.state.db_path,
+            list_id,
+            item_id,
+            payload,
+        )
 
     return application
 
