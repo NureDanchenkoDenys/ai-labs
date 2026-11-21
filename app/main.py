@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from app.db import DEFAULT_DB_PATH, init_db
 from app.schemas import CategoryResponse, ShoppingListCreate, ShoppingListResponse
-from app.services import create_shopping_list, list_categories
+from app.services import create_shopping_list, list_categories, list_shopping_lists
 
 
 def error_response(
@@ -233,6 +233,22 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             )
 
         return create_shopping_list(request.app.state.db_path, payload)
+
+    @application.get(
+        "/lists",
+        status_code=200,
+        response_model=list[ShoppingListResponse],
+    )
+    async def get_lists(
+        request: Request,
+    ) -> list[ShoppingListResponse] | JSONResponse:
+        invalid_input = await _unexpected_get_input_response(
+            request,
+            "GET /lists",
+        )
+        if invalid_input is not None:
+            return invalid_input
+        return list_shopping_lists(request.app.state.db_path)
 
     return application
 

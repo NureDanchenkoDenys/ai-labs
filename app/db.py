@@ -166,3 +166,20 @@ def insert_shopping_list(
         "name": str(row["name"]),
         "created_at": str(row["created_at"]),
     }
+
+
+def fetch_shopping_lists(
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> list[dict[str, int | str]]:
+    with closing(get_connection(db_path)) as conn:
+        rows = conn.execute(
+            "SELECT id, name, created_at FROM shopping_lists ORDER BY created_at ASC, id ASC"
+        ).fetchall()
+    return [
+        {
+            "id": int(row["id"]),
+            "name": str(row["name"]),
+            "created_at": str(row["created_at"]),
+        }
+        for row in rows
+    ]

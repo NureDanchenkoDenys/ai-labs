@@ -1,7 +1,12 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app.db import CATEGORIES, fetch_categories, insert_shopping_list
+from app.db import (
+    CATEGORIES,
+    fetch_categories,
+    fetch_shopping_lists,
+    insert_shopping_list,
+)
 from app.schemas import CategoryResponse, ShoppingListCreate, ShoppingListResponse
 
 
@@ -36,3 +41,8 @@ def create_shopping_list(
         created_at=created_at,
     )
     return ShoppingListResponse.model_validate(record)
+
+
+def list_shopping_lists(db_path: str | Path) -> list[ShoppingListResponse]:
+    records = fetch_shopping_lists(db_path=db_path)
+    return [ShoppingListResponse.model_validate(record) for record in records]
