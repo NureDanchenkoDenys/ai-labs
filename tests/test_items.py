@@ -986,3 +986,272 @@ def test_patch_quantity_unit_pair(
     assert resp_to_pack.json()["quantity"] == 3
     assert resp_to_pack.json()["unit"] == "уп"
     assert _fetch_quantity_milli(db_path, item_id) == 3000
+
+
+def _count_list_items_in_db(
+    db_path: Path,
+    list_id: int,
+    is_purchased: int | None = None,
+) -> int:
+    with closing(sqlite3.connect(db_path)) as conn:
+        if is_purchased is None:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM shopping_items WHERE list_id = ?",
+                (list_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM shopping_items WHERE list_id = ? AND is_purchased = ?",
+                (list_id, is_purchased),
+            ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_delete_item_updates_statistics(
+    client: TestClient,
+    db_path: Path,
+) -> None:
+    # Примітка: HTTP-перевірку GET /lists/{list_id}/statistics (API-10) буде додано у зрізі E.
+    # На цьому етапі перевіряємо AC-05-01 через 204 без тіла, GET /lists/{list_id}
+    # та зменшення кількості записів у тимчасовій SQLite-БД.
+    list_a = _create_list(client, name="На тиждень")
+    list_b = _create_list(client, name="Інший список")
+
+    item_unpurchased = _create_item(
+        client,
+        list_a,
+        name="Молоко",
+        quantity=2,
+        unit="л",
+        category_id=1,
+    )
+    item_duplicate = _create_item(
+        client,
+        list_a,
+        name="Молоко",
+        quantity=1,
+        unit="л",
+        category_id=1,
+    )
+    item_purchased = _create_item(
+        client,
+        list_a,
+        name="Яблука",
+        quantity=1,
+        unit="кг",
+        category_id=3,
+    )
+    item_other_list = _create_item(
+        client,
+        list_b,
+        name="Хліб",
+        quantity=1,
+        unit="шт",
+        category_id=5,
+    )
+
+    # API-09 ще не реалізований: виставляємо is_purchased = 1 безпосередньо в ізольованій БД tmp_path.
+    with closing(sqlite3.connect(db_path)) as conn:
+        with conn:
+            conn.execute(
+                "UPDATE shopping_items SET is_purchased = 1 WHERE id = ?",
+                (item_purchased["id"],),
+            )
+    expected_purchased = {**item_purchased, "is_purchased": True}
+
+    assert _count_list_items_in_db(db_path, list_a) == 3
+    assert _count_list_items_in_db(db_path, list_a, is_purchased=0) == 2
+    assert _count_list_items_in_db(db_path, list_a, is_purchased=1) == 1
+    assert _count_list_items_in_db(db_path, list_b) == 1
+
+    # Видалення непридбаної позиції → 204 без тіла і без application/json Content-Type.
+    resp_del_unpurchased = client.delete(
+        f"/lists/{list_a}/items/{item_unpurchased['id']}"
+    )
+    assert resp_del_unpurchased.status_code == 204
+    assert resp_del_unpurchased.content == b""
+    assert resp_del_unpurchased.text == ""
+    assert resp_del_unpurchased.headers.get("content-type") is None
+
+    # Дублікат і решта позицій у list_a та позиція в list_b не постраждали.
+    resp_list_a = client.get(f"/lists/{list_a}")
+    assert resp_list_a.status_code == 200
+    assert resp_list_a.json()["items"] == [item_duplicate, expected_purchased]
+    assert _count_list_items_in_db(db_path, list_a) == 2
+    assert _count_list_items_in_db(db_path, list_a, is_purchased=0) == 1
+    assert _count_list_items_in_db(db_path, list_a, is_purchased=1) == 1
+
+    resp_list_b = client.get(f"/lists/{list_b}")
+    assert resp_list_b.status_code == 200
+    assert resp_list_b.json()["items"] == [item_other_list]
+    assert _count_list_items_in_db(db_path, list_b) == 1
+
+    # Видалення вже придбаної позиції дозволено (D-06/BR-02) → 204 без тіла.
+    resp_del_purchased = client.delete(
+        f"/lists/{list_a}/items/{item_purchased['id']}"
+    )
+    assert resp_del_purchased.status_code == 204
+    assert resp_del_purchased.content == b""
+    assert resp_del_purchased.headers.get("content-type") is None
+
+    resp_list_a_after_purchased = client.get(f"/lists/{list_a}")
+    assert resp_list_a_after_purchased.status_code == 200
+    assert resp_list_a_after_purchased.json()["items"] == [item_duplicate]
+    assert _count_list_items_in_db(db_path, list_a) == 1
+    assert _count_list_items_in_db(db_path, list_a, is_purchased=0) == 1
+    assert _count_list_items_in_db(db_path, list_a, is_purchased=1) == 0
+
+    # Видалення останньої позиції залишає порожній коректний список, не зачіпаючи інші списки.
+    resp_del_last = client.delete(f"/lists/{list_a}/items/{item_duplicate['id']}")
+    assert resp_del_last.status_code == 204
+    assert resp_del_last.content == b""
+    assert resp_del_last.headers.get("content-type") is None
+
+    resp_list_a_empty = client.get(f"/lists/{list_a}")
+    assert resp_list_a_empty.status_code == 200
+    assert resp_list_a_empty.json()["items"] == []
+    assert _count_list_items_in_db(db_path, list_a) == 0
+
+    resp_lists = client.get("/lists")
+    assert resp_lists.status_code == 200
+    assert [entry["id"] for entry in resp_lists.json()] == [list_a, list_b]
+    assert _get_item(client, list_b, int(item_other_list["id"])) == item_other_list
+    assert _count_list_items_in_db(db_path, list_b) == 1
+
+    # OpenAPI-контракт: 204 без тіла відповіді й без requestBody.
+    openapi_resp = client.get("/openapi.json")
+    assert openapi_resp.status_code == 200
+    delete_spec = openapi_resp.json()["paths"]["/lists/{list_id}/items/{item_id}"][
+        "delete"
+    ]
+    assert "requestBody" not in delete_spec
+    assert "204" in delete_spec["responses"]
+    assert "content" not in delete_spec["responses"]["204"]
+
+
+def test_delete_missing_or_wrong_list_item(
+    client: TestClient,
+    db_path: Path,
+) -> None:
+    list_a = _create_list(client, name="Список А")
+    list_b = _create_list(client, name="Список Б")
+    item_a = _create_item(
+        client,
+        list_a,
+        name="Молоко",
+        quantity=2,
+        unit="л",
+        category_id=1,
+    )
+    item_b = _create_item(
+        client,
+        list_b,
+        name="Хліб",
+        quantity=1,
+        unit="шт",
+        category_id=5,
+    )
+    item_a_id = int(item_a["id"])
+    item_b_id = int(item_b["id"])
+
+    # AC-05-02: повторний DELETE після успішного видалення → 404 item_not_found.
+    resp_first = client.delete(f"/lists/{list_a}/items/{item_a_id}")
+    assert resp_first.status_code == 204
+    assert resp_first.content == b""
+
+    resp_repeat = client.delete(f"/lists/{list_a}/items/{item_a_id}")
+    detail_repeat = _assert_error(resp_repeat, 404, "item_not_found")
+    assert detail_repeat["fields"] == []
+
+    # Відсутня позиція в наявному списку → 404 item_not_found.
+    resp_missing_item = client.delete(f"/lists/{list_a}/items/999999")
+    detail_missing_item = _assert_error(resp_missing_item, 404, "item_not_found")
+    assert detail_missing_item["fields"] == []
+
+    # AC-05-02 / BR-01: позиція іншого списку → 404 item_not_found; чужа позиція не змінюється.
+    resp_wrong_list = client.delete(f"/lists/{list_a}/items/{item_b_id}")
+    detail_wrong_list = _assert_error(resp_wrong_list, 404, "item_not_found")
+    assert detail_wrong_list["fields"] == []
+    assert _get_item(client, list_b, item_b_id) == item_b
+
+    # Відсутній список → 404 list_not_found (навіть якщо item_id існує в іншому списку).
+    for target_item_id in (item_b_id, 999999):
+        resp_missing_list = client.delete(f"/lists/999/items/{target_item_id}")
+        detail_missing_list = _assert_error(resp_missing_list, 404, "list_not_found")
+        assert detail_missing_list["fields"] == []
+    assert _get_item(client, list_b, item_b_id) == item_b
+
+    # BR-06 крок 1 раніше кроку 2: невалідні path-параметри → 422 validation_error.
+    for bad_id in ("0", "-1", "2147483648", "abc"):
+        resp_bad_list = client.delete(f"/lists/{bad_id}/items/{item_b_id}")
+        _assert_error(resp_bad_list, 422, "validation_error", field="path.list_id")
+
+        resp_bad_item = client.delete(f"/lists/{list_b}/items/{bad_id}")
+        _assert_error(resp_bad_item, 422, "validation_error", field="path.item_id")
+
+        resp_bad_item_missing_list = client.delete(f"/lists/999/items/{bad_id}")
+        _assert_error(
+            resp_bad_item_missing_list,
+            422,
+            "validation_error",
+            field="path.item_id",
+        )
+
+    # BR-06 крок 1 раніше кроку 2: зайві query-параметри та будь-яке непорожнє тіло → 422.
+    for target_url in (
+        f"/lists/{list_b}/items/{item_b_id}",
+        f"/lists/{list_a}/items/{item_b_id}",
+        f"/lists/999/items/{item_b_id}",
+    ):
+        resp_query = client.delete(f"{target_url}?extra=1")
+        _assert_error(resp_query, 422, "validation_error", field="query.extra")
+
+        resp_repeated_query = client.delete(f"{target_url}?a=1&a=2")
+        _assert_error(resp_repeated_query, 422, "validation_error", field="query.a")
+
+        for raw_body, headers in (
+            (b"{}", {"Content-Type": "application/json"}),
+            (b'{"confirm": true}', {"Content-Type": "application/json"}),
+            (b"delete", {"Content-Type": "text/plain"}),
+            (b"raw-body", {}),
+        ):
+            resp_body = client.request(
+                "DELETE",
+                target_url,
+                content=raw_body,
+                headers=headers,
+            )
+            _assert_error(resp_body, 422, "validation_error", field="body")
+
+    assert _get_item(client, list_b, item_b_id) == item_b
+
+    # Аварійна помилка БД під час DELETE → 500 internal_error та повний rollback без витоку деталей.
+    with closing(sqlite3.connect(db_path)) as conn:
+        with conn:
+            conn.execute(
+                """
+                CREATE TRIGGER fail_after_item_delete
+                AFTER DELETE ON shopping_items
+                BEGIN
+                    SELECT RAISE(ABORT, 'simulated_delete_failure');
+                END
+                """
+            )
+    try:
+        with TestClient(
+            create_app(db_path),
+            raise_server_exceptions=False,
+        ) as no_raise_client:
+            resp_500 = no_raise_client.delete(f"/lists/{list_b}/items/{item_b_id}")
+        detail_500 = _assert_error(resp_500, 500, "internal_error")
+        assert detail_500["fields"] == []
+        assert "simulated_delete_failure" not in detail_500["message"]
+    finally:
+        with closing(sqlite3.connect(db_path)) as conn:
+            with conn:
+                conn.execute("DROP TRIGGER IF EXISTS fail_after_item_delete")
+
+    # Після rollback позиція залишилася в списку Б без змін.
+    assert _get_item(client, list_b, item_b_id) == item_b
+    assert _count_list_items_in_db(db_path, list_b) == 1

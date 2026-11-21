@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from fastapi import FastAPI, Request
 from fastapi import Path as PathParam
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from app.db import DEFAULT_DB_PATH, init_db
@@ -28,6 +28,7 @@ from app.services import (
     ListNotFoundError,
     create_shopping_item,
     create_shopping_list,
+    delete_shopping_item,
     get_shopping_list,
     list_categories,
     list_shopping_lists,
@@ -63,16 +64,17 @@ def _unexpected_query_fields(request: Request) -> list[dict[str, str]]:
     ]
 
 
-async def _unexpected_get_input_response(
+async def _unexpected_no_body_input_response(
     request: Request,
     route_label: str,
+    method: str,
 ) -> JSONResponse | None:
     fields = _unexpected_query_fields(request)
     if await request.body():
         fields.append(
             {
                 "field": "body",
-                "message": "GET-запит не приймає тіло.",
+                "message": f"{method}-запит не приймає тіло.",
             }
         )
     if fields:
@@ -83,6 +85,17 @@ async def _unexpected_get_input_response(
             fields=fields,
         )
     return None
+
+
+async def _unexpected_get_input_response(
+    request: Request,
+    route_label: str,
+) -> JSONResponse | None:
+    return await _unexpected_no_body_input_response(
+        request=request,
+        route_label=route_label,
+        method="GET",
+    )
 
 
 def _format_validation_fields(
@@ -470,6 +483,31 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             item_id,
             payload,
         )
+
+    @application.delete(
+        "/lists/{list_id}/items/{item_id}",
+        status_code=204,
+        response_class=Response,
+    )
+    async def delete_list_item(
+        list_id: Annotated[int, PathParam(ge=1, le=2147483647)],
+        item_id: Annotated[int, PathParam(ge=1, le=2147483647)],
+        request: Request,
+    ) -> Response:
+        invalid_input = await _unexpected_no_body_input_response(
+            request=request,
+            route_label="DELETE /lists/{list_id}/items/{item_id}",
+            method="DELETE",
+        )
+        if invalid_input is not None:
+            return invalid_input
+
+        delete_shopping_item(
+            request.app.state.db_path,
+            list_id,
+            item_id,
+        )
+        return Response(status_code=204)
 
     return application
 

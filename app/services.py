@@ -4,6 +4,7 @@ from pathlib import Path
 from app.db import (
     CATEGORIES,
     category_exists_in_tx,
+    delete_shopping_item_in_tx,
     fetch_categories,
     fetch_shopping_item_in_tx,
     fetch_shopping_list_with_items,
@@ -225,3 +226,21 @@ def update_shopping_item(
         )
 
     return ShoppingItemResponse.model_validate(updated)
+
+
+def delete_shopping_item(
+    db_path: str | Path,
+    list_id: int,
+    item_id: int,
+) -> None:
+    with write_transaction(db_path) as conn:
+        if not shopping_list_exists_in_tx(conn, list_id):
+            raise ListNotFoundError(list_id)
+
+        deleted = delete_shopping_item_in_tx(
+            conn=conn,
+            list_id=list_id,
+            item_id=item_id,
+        )
+        if not deleted:
+            raise ItemNotFoundError(list_id=list_id, item_id=item_id)
