@@ -118,6 +118,28 @@ class ShoppingListResponse(BaseModel):
     created_at: str
 
 
+def _validate_and_normalize_item_name(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(
+            "Після видалення крайніх пробілів потрібен щонайменше 1 символ."
+        )
+    if len(normalized) > 160:
+        raise ValueError(
+            "Максимальна довжина назви після видалення крайніх пробілів — 160 символів."
+        )
+    return normalized
+
+
+def _validate_and_normalize_unit(value: str) -> str:
+    normalized = value.strip()
+    if normalized not in ALLOWED_UNITS:
+        raise ValueError(
+            "Допустимі одиниці вимірювання: шт, кг, г, л, мл, уп."
+        )
+    return normalized
+
+
 class ShoppingItemCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -129,16 +151,7 @@ class ShoppingItemCreate(BaseModel):
     @field_validator("name", mode="after")
     @classmethod
     def validate_and_normalize_name(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError(
-                "Після видалення крайніх пробілів потрібен щонайменше 1 символ."
-            )
-        if len(normalized) > 160:
-            raise ValueError(
-                "Максимальна довжина назви після видалення крайніх пробілів — 160 символів."
-            )
-        return normalized
+        return _validate_and_normalize_item_name(value)
 
     @field_validator("quantity", mode="before")
     @classmethod
@@ -149,15 +162,41 @@ class ShoppingItemCreate(BaseModel):
     @field_validator("unit", mode="after")
     @classmethod
     def validate_and_normalize_unit(cls, value: str) -> str:
-        normalized = value.strip()
-        if normalized not in ALLOWED_UNITS:
-            raise ValueError(
-                "Допустимі одиниці вимірювання: шт, кг, г, л, мл, уп."
-            )
-        return normalized
+        return _validate_and_normalize_unit(value)
 
     @property
     def quantity_milli(self) -> int:
+        return quantity_to_milli(self.quantity)
+
+
+class ShoppingItemUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    name: str = Field(default_factory=str)
+    quantity: QuantityValue = Field(default_factory=Decimal)
+    unit: UnitValue = Field(default_factory=str)
+    category_id: int = Field(default_factory=int, ge=1, le=MAX_INT32)
+
+    @field_validator("name", mode="after")
+    @classmethod
+    def validate_and_normalize_name(cls, value: str) -> str:
+        return _validate_and_normalize_item_name(value)
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def validate_quantity(cls, value: Any) -> Decimal:
+        milli = quantity_to_milli(value)
+        return Decimal(milli) / Decimal(1000)
+
+    @field_validator("unit", mode="after")
+    @classmethod
+    def validate_and_normalize_unit(cls, value: str) -> str:
+        return _validate_and_normalize_unit(value)
+
+    @property
+    def quantity_milli(self) -> int | None:
+        if "quantity" not in self.model_fields_set:
+            return None
         return quantity_to_milli(self.quantity)
 
 

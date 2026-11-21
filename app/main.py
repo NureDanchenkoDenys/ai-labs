@@ -16,12 +16,14 @@ from app.schemas import (
     CategoryResponse,
     ShoppingItemCreate,
     ShoppingItemResponse,
+    ShoppingItemUpdate,
     ShoppingListCreate,
     ShoppingListDetailResponse,
     ShoppingListResponse,
 )
 from app.services import (
     CategoryNotFoundError,
+    ItemNotFoundError,
     ItemValidationError,
     ListNotFoundError,
     create_shopping_item,
@@ -29,6 +31,7 @@ from app.services import (
     get_shopping_list,
     list_categories,
     list_shopping_lists,
+    update_shopping_item,
 )
 
 
@@ -232,6 +235,17 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             message=f"Список {exc.list_id} не знайдено.",
         )
 
+    @application.exception_handler(ItemNotFoundError)
+    async def handle_item_not_found_error(
+        request: Request,
+        exc: ItemNotFoundError,
+    ) -> JSONResponse:
+        return error_response(
+            status_code=404,
+            code="item_not_found",
+            message=f"Позицію {exc.item_id} у списку {exc.list_id} не знайдено.",
+        )
+
     @application.exception_handler(CategoryNotFoundError)
     async def handle_category_not_found_error(
         request: Request,
@@ -409,6 +423,53 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             )
 
         return create_shopping_item(request.app.state.db_path, list_id, payload)
+
+    @application.patch(
+        "/lists/{list_id}/items/{item_id}",
+        status_code=200,
+        response_model=ShoppingItemResponse,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": ShoppingItemUpdate.model_json_schema()
+                    }
+                },
+            }
+        },
+    )
+    async def patch_list_item(
+        list_id: Annotated[int, PathParam(ge=1, le=2147483647)],
+        item_id: Annotated[int, PathParam(ge=1, le=2147483647)],
+        request: Request,
+    ) -> ShoppingItemResponse | JSONResponse:
+        body_data, error = await _parse_json_object_body(
+            request=request,
+            route_label="PATCH /lists/{list_id}/items/{item_id}",
+            empty_body_message=(
+                "Передайте JSON-об’єкт із полями для оновлення або порожній {}."
+            ),
+        )
+        if error is not None:
+            return error
+
+        try:
+            payload = ShoppingItemUpdate.model_validate(body_data)
+        except ValidationError as exc:
+            return error_response(
+                status_code=422,
+                code="validation_error",
+                message="Оновлення відхилено без збереження змін.",
+                fields=_format_validation_fields(exc.errors(), prefix=("body",)),
+            )
+
+        return update_shopping_item(
+            request.app.state.db_path,
+            list_id,
+            item_id,
+            payload,
+        )
 
     return application
 

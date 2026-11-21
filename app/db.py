@@ -1,5 +1,6 @@
 import sqlite3
-from contextlib import closing
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -326,3 +327,107 @@ def fetch_shopping_list_with_items(
         "created_at": str(list_row["created_at"]),
         "items": [_row_to_shopping_item(row) for row in item_rows],
     }
+
+
+@contextmanager
+def write_transaction(db_path: str | Path) -> Iterator[sqlite3.Connection]:
+    with closing(get_connection(db_path)) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+        except BaseException:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+        else:
+            if conn.in_transaction:
+                conn.commit()
+
+
+def shopping_list_exists_in_tx(
+    conn: sqlite3.Connection,
+    list_id: int,
+) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM shopping_lists WHERE id = ?",
+        (list_id,),
+    ).fetchone()
+    return row is not None
+
+
+def category_exists_in_tx(
+    conn: sqlite3.Connection,
+    category_id: int,
+) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM categories WHERE id = ?",
+        (category_id,),
+    ).fetchone()
+    return row is not None
+
+
+def fetch_shopping_item_in_tx(
+    conn: sqlite3.Connection,
+    list_id: int,
+    item_id: int,
+) -> tuple[dict[str, Any], int] | None:
+    row = conn.execute(
+        """
+        SELECT
+            id,
+            list_id,
+            name,
+            quantity_milli,
+            unit,
+            category_id,
+            is_purchased,
+            created_at
+        FROM shopping_items
+        WHERE id = ? AND list_id = ?
+        """,
+        (item_id, list_id),
+    ).fetchone()
+    if row is None:
+        return None
+    return (_row_to_shopping_item(row), int(row["quantity_milli"]))
+
+
+def update_shopping_item_in_tx(
+    conn: sqlite3.Connection,
+    list_id: int,
+    item_id: int,
+    name: str,
+    quantity_milli: int,
+    unit: str,
+    category_id: int,
+) -> dict[str, Any]:
+    cursor = conn.execute(
+        """
+        UPDATE shopping_items
+        SET name = ?, quantity_milli = ?, unit = ?, category_id = ?
+        WHERE id = ? AND list_id = ?
+        """,
+        (name, quantity_milli, unit, category_id, item_id, list_id),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError("Оновлювану позицію не знайдено під час збереження.")
+
+    row = conn.execute(
+        """
+        SELECT
+            id,
+            list_id,
+            name,
+            quantity_milli,
+            unit,
+            category_id,
+            is_purchased,
+            created_at
+        FROM shopping_items
+        WHERE id = ? AND list_id = ?
+        """,
+        (item_id, list_id),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("Оновлену позицію не знайдено після збереження.")
+    return _row_to_shopping_item(row)
