@@ -1,6 +1,8 @@
 import sqlite3
 from contextlib import closing
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 DEFAULT_DB_PATH = Path("database.db")
 
@@ -183,3 +185,59 @@ def fetch_shopping_lists(
         }
         for row in rows
     ]
+
+
+def _milli_to_quantity(quantity_milli: int) -> int | float:
+    if quantity_milli % 1000 == 0:
+        return quantity_milli // 1000
+    return float(Decimal(quantity_milli) / Decimal(1000))
+
+
+def fetch_shopping_list_with_items(
+    db_path: str | Path,
+    list_id: int,
+) -> dict[str, Any] | None:
+    with closing(get_connection(db_path)) as conn:
+        list_row = conn.execute(
+            "SELECT id, name, created_at FROM shopping_lists WHERE id = ?",
+            (list_id,),
+        ).fetchone()
+        if list_row is None:
+            return None
+
+        item_rows = conn.execute(
+            """
+            SELECT
+                id,
+                list_id,
+                name,
+                quantity_milli,
+                unit,
+                category_id,
+                is_purchased,
+                created_at
+            FROM shopping_items
+            WHERE list_id = ?
+            ORDER BY created_at ASC, id ASC
+            """,
+            (list_id,),
+        ).fetchall()
+
+    return {
+        "id": int(list_row["id"]),
+        "name": str(list_row["name"]),
+        "created_at": str(list_row["created_at"]),
+        "items": [
+            {
+                "id": int(row["id"]),
+                "list_id": int(row["list_id"]),
+                "name": str(row["name"]),
+                "quantity": _milli_to_quantity(int(row["quantity_milli"])),
+                "unit": str(row["unit"]),
+                "category_id": int(row["category_id"]),
+                "is_purchased": bool(int(row["is_purchased"])),
+                "created_at": str(row["created_at"]),
+            }
+            for row in item_rows
+        ],
+    }

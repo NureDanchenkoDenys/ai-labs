@@ -35,3 +35,22 @@ class ShoppingListResponse(BaseModel):
     id: int
     name: str
     created_at: str
+
+
+class ShoppingItemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    list_id: int
+    name: str
+    quantity: int | float
+    unit: str
+    category_id: int
+    is_purchased: bool
+    created_at: str
+
+
+class ShoppingListDetailResponse(ShoppingListResponse):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[ShoppingItemResponse]

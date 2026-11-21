@@ -2,16 +2,28 @@ import json
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import FastAPI, Request
+from fastapi import Path as PathParam
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from app.db import DEFAULT_DB_PATH, init_db
-from app.schemas import CategoryResponse, ShoppingListCreate, ShoppingListResponse
-from app.services import create_shopping_list, list_categories, list_shopping_lists
+from app.schemas import (
+    CategoryResponse,
+    ShoppingListCreate,
+    ShoppingListDetailResponse,
+    ShoppingListResponse,
+)
+from app.services import (
+    ListNotFoundError,
+    create_shopping_list,
+    get_shopping_list,
+    list_categories,
+    list_shopping_lists,
+)
 
 
 def error_response(
@@ -107,6 +119,17 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             code="validation_error",
             message="Некоректні вхідні дані.",
             fields=_format_validation_fields(exc.errors()),
+        )
+
+    @application.exception_handler(ListNotFoundError)
+    async def handle_list_not_found_error(
+        request: Request,
+        exc: ListNotFoundError,
+    ) -> JSONResponse:
+        return error_response(
+            status_code=404,
+            code="list_not_found",
+            message=f"Список {exc.list_id} не знайдено.",
         )
 
     @application.exception_handler(Exception)
@@ -249,6 +272,23 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
         if invalid_input is not None:
             return invalid_input
         return list_shopping_lists(request.app.state.db_path)
+
+    @application.get(
+        "/lists/{list_id}",
+        status_code=200,
+        response_model=ShoppingListDetailResponse,
+    )
+    async def get_list(
+        list_id: Annotated[int, PathParam(ge=1, le=2147483647)],
+        request: Request,
+    ) -> ShoppingListDetailResponse | JSONResponse:
+        invalid_input = await _unexpected_get_input_response(
+            request,
+            "GET /lists/{list_id}",
+        )
+        if invalid_input is not None:
+            return invalid_input
+        return get_shopping_list(request.app.state.db_path, list_id)
 
     return application
 

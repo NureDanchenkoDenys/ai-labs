@@ -418,3 +418,301 @@ def test_get_lists_returns_500_internal_error_on_db_failure(
     assert detail["message"]
     assert detail["fields"] == []
     assert "simulated_internal_db_error" not in response.text
+
+
+def test_read_lists_and_list_items_ordered(
+    client: TestClient,
+    db_path: Path,
+) -> None:
+    with closing(get_connection(db_path)) as conn:
+        with conn:
+            conn.executemany(
+                "INSERT INTO shopping_lists (id, name, created_at) VALUES (?, ?, ?)",
+                [
+                    (10, "На тиждень", "2026-11-19T16:00:00Z"),
+                    (20, "На вихідні", "2026-11-19T15:00:00Z"),
+                ],
+            )
+            conn.executemany(
+                """
+                INSERT INTO shopping_items (
+                    id, list_id, name, quantity_milli, unit, category_id, is_purchased, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (103, 10, "Сир", 250, "г", 1, 1, "2026-11-19T16:05:00Z"),
+                    (102, 10, "Яблука", 1500, "кг", 3, 0, "2026-11-19T16:01:00Z"),
+                    (101, 10, "Молоко", 2000, "л", 1, 0, "2026-11-19T16:01:00Z"),
+                    (104, 10, "Сіль", 1, "кг", 8, 0, "2026-11-19T16:00:30Z"),
+                    (201, 20, "Хліб", 1000, "шт", 5, 1, "2026-11-19T15:10:00Z"),
+                ],
+            )
+
+    lists_response = client.get("/lists")
+    assert lists_response.status_code == 200
+    assert lists_response.headers["content-type"].startswith("application/json")
+    assert lists_response.json() == [
+        {
+            "id": 20,
+            "name": "На вихідні",
+            "created_at": "2026-11-19T15:00:00Z",
+        },
+        {
+            "id": 10,
+            "name": "На тиждень",
+            "created_at": "2026-11-19T16:00:00Z",
+        },
+    ]
+
+    first_detail = client.get("/lists/10")
+    assert first_detail.status_code == 200
+    assert first_detail.headers["content-type"].startswith("application/json")
+    first_body = first_detail.json()
+    assert set(first_body.keys()) == {"id", "name", "created_at", "items"}
+    assert first_body == {
+        "id": 10,
+        "name": "На тиждень",
+        "created_at": "2026-11-19T16:00:00Z",
+        "items": [
+            {
+                "id": 104,
+                "list_id": 10,
+                "name": "Сіль",
+                "quantity": 0.001,
+                "unit": "кг",
+                "category_id": 8,
+                "is_purchased": False,
+                "created_at": "2026-11-19T16:00:30Z",
+            },
+            {
+                "id": 101,
+                "list_id": 10,
+                "name": "Молоко",
+                "quantity": 2,
+                "unit": "л",
+                "category_id": 1,
+                "is_purchased": False,
+                "created_at": "2026-11-19T16:01:00Z",
+            },
+            {
+                "id": 102,
+                "list_id": 10,
+                "name": "Яблука",
+                "quantity": 1.5,
+                "unit": "кг",
+                "category_id": 3,
+                "is_purchased": False,
+                "created_at": "2026-11-19T16:01:00Z",
+            },
+            {
+                "id": 103,
+                "list_id": 10,
+                "name": "Сир",
+                "quantity": 0.25,
+                "unit": "г",
+                "category_id": 1,
+                "is_purchased": True,
+                "created_at": "2026-11-19T16:05:00Z",
+            },
+        ],
+    }
+
+    expected_item_keys = {
+        "id",
+        "list_id",
+        "name",
+        "quantity",
+        "unit",
+        "category_id",
+        "is_purchased",
+        "created_at",
+    }
+    for item in first_body["items"]:
+        assert set(item.keys()) == expected_item_keys
+        assert "quantity_milli" not in item
+        assert type(item["id"]) is int
+        assert type(item["list_id"]) is int
+        assert type(item["category_id"]) is int
+        assert type(item["is_purchased"]) is bool
+        assert isinstance(item["name"], str)
+        assert isinstance(item["unit"], str)
+        assert isinstance(item["created_at"], str)
+
+    assert type(first_body["items"][0]["quantity"]) is float
+    assert type(first_body["items"][1]["quantity"]) is int
+    assert type(first_body["items"][2]["quantity"]) is float
+    assert type(first_body["items"][3]["quantity"]) is float
+
+    second_detail = client.get("/lists/20")
+    assert second_detail.status_code == 200
+    assert second_detail.headers["content-type"].startswith("application/json")
+    second_body = second_detail.json()
+    assert second_body == {
+        "id": 20,
+        "name": "На вихідні",
+        "created_at": "2026-11-19T15:00:00Z",
+        "items": [
+            {
+                "id": 201,
+                "list_id": 20,
+                "name": "Хліб",
+                "quantity": 1,
+                "unit": "шт",
+                "category_id": 5,
+                "is_purchased": True,
+                "created_at": "2026-11-19T15:10:00Z",
+            }
+        ],
+    }
+    assert type(second_body["items"][0]["quantity"]) is int
+    assert type(second_body["items"][0]["is_purchased"]) is bool
+
+
+def test_read_empty_lists_and_items(client: TestClient, db_path: Path) -> None:
+    empty_lists_response = client.get("/lists")
+    assert empty_lists_response.status_code == 200
+    assert empty_lists_response.headers["content-type"].startswith("application/json")
+    assert empty_lists_response.json() == []
+
+    empty_list = client.post("/lists", json={"name": "Порожній список"})
+    other_list = client.post("/lists", json={"name": "Список із товаром"})
+    assert empty_list.status_code == 201
+    assert other_list.status_code == 201
+
+    empty_list_data = empty_list.json()
+    other_list_id = other_list.json()["id"]
+    with closing(get_connection(db_path)) as conn:
+        with conn:
+            conn.execute(
+                """
+                INSERT INTO shopping_items (
+                    list_id, name, quantity_milli, unit, category_id, is_purchased, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (other_list_id, "Молоко", 2000, "л", 1, 0, "2026-11-19T16:01:00Z"),
+            )
+
+    response = client.get(f"/lists/{empty_list_data['id']}")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {
+        **empty_list_data,
+        "items": [],
+    }
+
+
+@pytest.mark.parametrize("missing_id", [999, 2147483647])
+def test_read_missing_list(client: TestClient, missing_id: int) -> None:
+    response = client.get(f"/lists/{missing_id}")
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/json")
+    detail = response.json()["detail"]
+    assert detail == {
+        "code": "list_not_found",
+        "message": f"Список {missing_id} не знайдено.",
+        "fields": [],
+    }
+
+
+@pytest.mark.parametrize(
+    "raw_list_id",
+    ["0", "-1", "2147483648", "abc", "1.5", "true"],
+)
+def test_get_list_rejects_invalid_list_id(
+    client: TestClient,
+    raw_list_id: str,
+) -> None:
+    response = client.get(f"/lists/{raw_list_id}")
+
+    assert response.status_code == 422
+    assert response.headers["content-type"].startswith("application/json")
+    detail = response.json()["detail"]
+    assert detail["code"] == "validation_error"
+    _assert_error_fields(detail, ["path.list_id"])
+
+
+def test_get_list_rejects_query_params_and_body(client: TestClient) -> None:
+    created = client.post("/lists", json={"name": "На тиждень"})
+    assert created.status_code == 201
+    list_id = created.json()["id"]
+
+    single_query = client.get(f"/lists/{list_id}", params={"extra": "1"})
+    assert single_query.status_code == 422
+    assert single_query.headers["content-type"].startswith("application/json")
+    single_detail = single_query.json()["detail"]
+    assert single_detail["code"] == "validation_error"
+    _assert_error_fields(single_detail, ["query.extra"])
+
+    repeated_query = client.get(f"/lists/{list_id}?a=1&a=2")
+    assert repeated_query.status_code == 422
+    assert repeated_query.headers["content-type"].startswith("application/json")
+    repeated_detail = repeated_query.json()["detail"]
+    assert repeated_detail["code"] == "validation_error"
+    _assert_error_fields(repeated_detail, ["query.a", "query.a"])
+
+    with_body = client.request(
+        "GET",
+        f"/lists/{list_id}",
+        content=b'{"name": "x"}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert with_body.status_code == 422
+    assert with_body.headers["content-type"].startswith("application/json")
+    body_detail = with_body.json()["detail"]
+    assert body_detail["code"] == "validation_error"
+    _assert_error_fields(body_detail, ["body"])
+
+    with_query_and_body = client.request(
+        "GET",
+        f"/lists/{list_id}",
+        params={"extra": "1"},
+        content=b"raw",
+    )
+    assert with_query_and_body.status_code == 422
+    assert with_query_and_body.headers["content-type"].startswith("application/json")
+    combined_detail = with_query_and_body.json()["detail"]
+    assert combined_detail["code"] == "validation_error"
+    _assert_error_fields(combined_detail, ["query.extra", "body"])
+
+    missing_with_query = client.get("/lists/999", params={"extra": "1"})
+    assert missing_with_query.status_code == 422
+    missing_query_detail = missing_with_query.json()["detail"]
+    assert missing_query_detail["code"] == "validation_error"
+    _assert_error_fields(missing_query_detail, ["query.extra"])
+
+    missing_with_body = client.request(
+        "GET",
+        "/lists/999",
+        content=b'{"x": 1}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert missing_with_body.status_code == 422
+    missing_body_detail = missing_with_body.json()["detail"]
+    assert missing_body_detail["code"] == "validation_error"
+    _assert_error_fields(missing_body_detail, ["body"])
+
+
+def test_get_list_returns_500_internal_error_on_db_failure(
+    db_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _broken_fetch(*args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        raise sqlite3.OperationalError("simulated_internal_db_error")
+
+    monkeypatch.setattr(services, "fetch_shopping_list_with_items", _broken_fetch)
+
+    application = create_app(db_path)
+    with TestClient(application, raise_server_exceptions=False) as no_raise_client:
+        response = no_raise_client.get("/lists/1")
+
+    assert response.status_code == 500
+    assert response.headers["content-type"].startswith("application/json")
+    detail = response.json()["detail"]
+    assert detail["code"] == "internal_error"
+    assert isinstance(detail["message"], str)
+    assert detail["message"]
+    assert detail["fields"] == []
+    assert "simulated_internal_db_error" not in response.text

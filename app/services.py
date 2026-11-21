@@ -4,10 +4,22 @@ from pathlib import Path
 from app.db import (
     CATEGORIES,
     fetch_categories,
+    fetch_shopping_list_with_items,
     fetch_shopping_lists,
     insert_shopping_list,
 )
-from app.schemas import CategoryResponse, ShoppingListCreate, ShoppingListResponse
+from app.schemas import (
+    CategoryResponse,
+    ShoppingListCreate,
+    ShoppingListDetailResponse,
+    ShoppingListResponse,
+)
+
+
+class ListNotFoundError(Exception):
+    def __init__(self, list_id: int) -> None:
+        self.list_id = list_id
+        super().__init__(f"Список {list_id} не знайдено.")
 
 
 def list_categories(db_path: str | Path) -> list[CategoryResponse]:
@@ -46,3 +58,13 @@ def create_shopping_list(
 def list_shopping_lists(db_path: str | Path) -> list[ShoppingListResponse]:
     records = fetch_shopping_lists(db_path=db_path)
     return [ShoppingListResponse.model_validate(record) for record in records]
+
+
+def get_shopping_list(
+    db_path: str | Path,
+    list_id: int,
+) -> ShoppingListDetailResponse:
+    record = fetch_shopping_list_with_items(db_path=db_path, list_id=list_id)
+    if record is None:
+        raise ListNotFoundError(list_id)
+    return ShoppingListDetailResponse.model_validate(record)
