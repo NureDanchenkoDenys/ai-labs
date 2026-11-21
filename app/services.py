@@ -7,11 +7,13 @@ from app.db import (
     category_exists_in_tx,
     delete_shopping_item_in_tx,
     fetch_categories,
+    fetch_category_statistics_in_tx,
     fetch_shopping_item_in_tx,
     fetch_shopping_list_with_items,
     fetch_shopping_lists,
     insert_shopping_item,
     insert_shopping_list,
+    read_transaction,
     shopping_list_exists,
     shopping_list_exists_in_tx,
     update_shopping_item_in_tx,
@@ -28,6 +30,7 @@ from app.schemas import (
     ShoppingListCreate,
     ShoppingListDetailResponse,
     ShoppingListResponse,
+    ShoppingListStatisticsResponse,
 )
 
 
@@ -290,3 +293,50 @@ def update_shopping_item_purchase(
         )
 
     return ShoppingItemResponse.model_validate(updated)
+
+
+def get_shopping_list_statistics(
+    db_path: str | Path,
+    list_id: int,
+) -> ShoppingListStatisticsResponse:
+    with read_transaction(db_path) as conn:
+        if not shopping_list_exists_in_tx(conn, list_id):
+            raise ListNotFoundError(list_id)
+
+        category_records = fetch_category_statistics_in_tx(conn, list_id)
+
+    expected_catalog = tuple((cid, name) for cid, name, _ in CATEGORIES)
+    actual_catalog = tuple(
+        (int(record["category_id"]), str(record["category_name"]))
+        for record in category_records
+    )
+    if actual_catalog != expected_catalog:
+        raise RuntimeError(
+            "Довідник категорій у БД не відповідає нормативному переліку."
+        )
+
+    total_items = 0
+    purchased_items = 0
+    unpurchased_items = 0
+    for record in category_records:
+        cat_total = int(record["total_items"])
+        cat_purchased = int(record["purchased_items"])
+        cat_unpurchased = int(record["unpurchased_items"])
+        if cat_total != cat_purchased + cat_unpurchased:
+            raise RuntimeError("Порушено інваріант статистики для категорії.")
+        total_items += cat_total
+        purchased_items += cat_purchased
+        unpurchased_items += cat_unpurchased
+
+    if total_items != purchased_items + unpurchased_items:
+        raise RuntimeError("Порушено інваріант загальної статистики списку.")
+
+    return ShoppingListStatisticsResponse.model_validate(
+        {
+            "list_id": list_id,
+            "total_items": total_items,
+            "purchased_items": purchased_items,
+            "unpurchased_items": unpurchased_items,
+            "categories": category_records,
+        }
+    )

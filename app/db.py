@@ -350,6 +350,17 @@ def fetch_shopping_list_with_items(
 
 
 @contextmanager
+def read_transaction(db_path: str | Path) -> Iterator[sqlite3.Connection]:
+    with closing(get_connection(db_path)) as conn:
+        conn.execute("BEGIN DEFERRED")
+        try:
+            yield conn
+        finally:
+            if conn.in_transaction:
+                conn.rollback()
+
+
+@contextmanager
 def write_transaction(db_path: str | Path) -> Iterator[sqlite3.Connection]:
     with closing(get_connection(db_path)) as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -503,3 +514,41 @@ def update_shopping_item_purchase_in_tx(
     if row is None:
         raise RuntimeError("Оновлену позицію не знайдено після збереження.")
     return _row_to_shopping_item(row)
+
+
+def fetch_category_statistics_in_tx(
+    conn: sqlite3.Connection,
+    list_id: int,
+) -> list[dict[str, int | str]]:
+    rows = conn.execute(
+        """
+        SELECT
+            c.id AS category_id,
+            c.name AS category_name,
+            COUNT(si.id) AS total_items,
+            COALESCE(
+                SUM(CASE WHEN si.is_purchased = 1 THEN 1 ELSE 0 END),
+                0
+            ) AS purchased_items,
+            COALESCE(
+                SUM(CASE WHEN si.is_purchased = 0 THEN 1 ELSE 0 END),
+                0
+            ) AS unpurchased_items
+        FROM categories AS c
+        LEFT JOIN shopping_items AS si
+            ON si.category_id = c.id AND si.list_id = ?
+        GROUP BY c.id, c.name
+        ORDER BY c.id ASC
+        """,
+        (list_id,),
+    ).fetchall()
+    return [
+        {
+            "category_id": int(row["category_id"]),
+            "category_name": str(row["category_name"]),
+            "total_items": int(row["total_items"]),
+            "purchased_items": int(row["purchased_items"]),
+            "unpurchased_items": int(row["unpurchased_items"]),
+        }
+        for row in rows
+    ]

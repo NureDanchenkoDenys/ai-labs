@@ -264,3 +264,23 @@ class ShoppingListDetailResponse(ShoppingListResponse):
     model_config = ConfigDict(extra="forbid")
 
     items: list[ShoppingItemResponse]
+
+
+class CategoryStatisticsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category_id: int = Field(ge=1, le=10)
+    category_name: str
+    total_items: int = Field(ge=0)
+    purchased_items: int = Field(ge=0)
+    unpurchased_items: int = Field(ge=0)
+
+
+class ShoppingListStatisticsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    list_id: int = Field(ge=1, le=MAX_INT32)
+    total_items: int = Field(ge=0)
+    purchased_items: int = Field(ge=0)
+    unpurchased_items: int = Field(ge=0)
+    categories: list[CategoryStatisticsResponse]

@@ -22,6 +22,7 @@ from app.schemas import (
     ShoppingListCreate,
     ShoppingListDetailResponse,
     ShoppingListResponse,
+    ShoppingListStatisticsResponse,
 )
 from app.services import (
     CategoryNotFoundError,
@@ -32,6 +33,7 @@ from app.services import (
     create_shopping_list,
     delete_shopping_item,
     get_shopping_list,
+    get_shopping_list_statistics,
     list_categories,
     list_shopping_lists,
     update_shopping_item,
@@ -641,6 +643,24 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
             item_id,
             payload,
         )
+
+    @application.get(
+        "/lists/{list_id}/statistics",
+        status_code=200,
+        response_model=ShoppingListStatisticsResponse,
+    )
+    async def get_list_statistics(
+        list_id: Annotated[int, PathParam(ge=1, le=2147483647)],
+        request: Request,
+    ) -> ShoppingListStatisticsResponse | JSONResponse:
+        invalid_input = await _unexpected_get_input_response(
+            request,
+            "GET /lists/{list_id}/statistics",
+        )
+        if invalid_input is not None:
+            return invalid_input
+
+        return get_shopping_list_statistics(request.app.state.db_path, list_id)
 
     return application
 

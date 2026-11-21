@@ -1012,9 +1012,31 @@ def test_delete_item_updates_statistics(
     client: TestClient,
     db_path: Path,
 ) -> None:
-    # Примітка: HTTP-перевірку GET /lists/{list_id}/statistics (API-10) буде додано у зрізі E.
-    # На цьому етапі перевіряємо AC-05-01 через 204 без тіла, GET /lists/{list_id}
-    # та зменшення кількості записів у тимчасовій SQLite-БД.
+    # Перевіряємо AC-05-01: 204 без тіла, GET /lists/{list_id}, зменшення записів
+    # у тимчасовій SQLite-БД та актуальну статистику через API-10.
+    def _assert_stats(
+        target_list_id: int,
+        expected_totals: tuple[int, int, int],
+        expected_categories: dict[int, tuple[int, int, int]],
+    ) -> None:
+        resp_stats = client.get(f"/lists/{target_list_id}/statistics")
+        assert resp_stats.status_code == 200
+        stats = resp_stats.json()
+        assert stats["list_id"] == target_list_id
+        assert (
+            stats["total_items"],
+            stats["purchased_items"],
+            stats["unpurchased_items"],
+        ) == expected_totals
+        assert len(stats["categories"]) == 10
+        for cat in stats["categories"]:
+            expected_cat = expected_categories.get(cat["category_id"], (0, 0, 0))
+            assert (
+                cat["total_items"],
+                cat["purchased_items"],
+                cat["unpurchased_items"],
+            ) == expected_cat
+
     list_a = _create_list(client, name="На тиждень")
     list_b = _create_list(client, name="Інший список")
 
@@ -1064,6 +1086,8 @@ def test_delete_item_updates_statistics(
     assert _count_list_items_in_db(db_path, list_a, is_purchased=0) == 2
     assert _count_list_items_in_db(db_path, list_a, is_purchased=1) == 1
     assert _count_list_items_in_db(db_path, list_b) == 1
+    _assert_stats(list_a, (3, 1, 2), {1: (2, 0, 2), 3: (1, 1, 0)})
+    _assert_stats(list_b, (1, 0, 1), {5: (1, 0, 1)})
 
     # Видалення непридбаної позиції → 204 без тіла і без application/json Content-Type.
     resp_del_unpurchased = client.delete(
@@ -1081,11 +1105,13 @@ def test_delete_item_updates_statistics(
     assert _count_list_items_in_db(db_path, list_a) == 2
     assert _count_list_items_in_db(db_path, list_a, is_purchased=0) == 1
     assert _count_list_items_in_db(db_path, list_a, is_purchased=1) == 1
+    _assert_stats(list_a, (2, 1, 1), {1: (1, 0, 1), 3: (1, 1, 0)})
 
     resp_list_b = client.get(f"/lists/{list_b}")
     assert resp_list_b.status_code == 200
     assert resp_list_b.json()["items"] == [item_other_list]
     assert _count_list_items_in_db(db_path, list_b) == 1
+    _assert_stats(list_b, (1, 0, 1), {5: (1, 0, 1)})
 
     # Видалення вже придбаної позиції дозволено (D-06/BR-02) → 204 без тіла.
     resp_del_purchased = client.delete(
@@ -1101,6 +1127,7 @@ def test_delete_item_updates_statistics(
     assert _count_list_items_in_db(db_path, list_a) == 1
     assert _count_list_items_in_db(db_path, list_a, is_purchased=0) == 1
     assert _count_list_items_in_db(db_path, list_a, is_purchased=1) == 0
+    _assert_stats(list_a, (1, 0, 1), {1: (1, 0, 1)})
 
     # Видалення останньої позиції залишає порожній коректний список, не зачіпаючи інші списки.
     resp_del_last = client.delete(f"/lists/{list_a}/items/{item_duplicate['id']}")
@@ -1112,12 +1139,14 @@ def test_delete_item_updates_statistics(
     assert resp_list_a_empty.status_code == 200
     assert resp_list_a_empty.json()["items"] == []
     assert _count_list_items_in_db(db_path, list_a) == 0
+    _assert_stats(list_a, (0, 0, 0), {})
 
     resp_lists = client.get("/lists")
     assert resp_lists.status_code == 200
     assert [entry["id"] for entry in resp_lists.json()] == [list_a, list_b]
     assert _get_item(client, list_b, int(item_other_list["id"])) == item_other_list
     assert _count_list_items_in_db(db_path, list_b) == 1
+    _assert_stats(list_b, (1, 0, 1), {5: (1, 0, 1)})
 
     # OpenAPI-контракт: 204 без тіла відповіді й без requestBody.
     openapi_resp = client.get("/openapi.json")
