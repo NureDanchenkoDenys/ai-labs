@@ -1,10 +1,12 @@
 import math
+import re
 from decimal import Decimal
 from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema, field_validator
 
 MAX_INT32 = 2147483647
+_ASCII_DIGITS_RE = re.compile(r"^[0-9]+$")
 MIN_QUANTITY = Decimal("0.001")
 MAX_QUANTITY = Decimal("10000")
 ALLOWED_UNITS: tuple[str, ...] = ("шт", "кг", "г", "л", "мл", "уп")
@@ -204,6 +206,45 @@ class ShoppingItemPurchaseUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     is_purchased: bool
+
+
+class ShoppingItemFilterQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    category_id: int | None = None
+    is_purchased: bool | None = None
+
+    @field_validator("category_id", mode="before")
+    @classmethod
+    def validate_category_id(cls, value: Any) -> int | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not _ASCII_DIGITS_RE.fullmatch(value):
+            raise ValueError(
+                "Параметр category_id має бути додатним десятковим цілим від 1 до 2147483647."
+            )
+        stripped = value.lstrip("0")
+        if not stripped or len(stripped) > 10:
+            raise ValueError(
+                "Параметр category_id має бути додатним десятковим цілим від 1 до 2147483647."
+            )
+        parsed = int(stripped)
+        if not (1 <= parsed <= MAX_INT32):
+            raise ValueError(
+                "Параметр category_id має бути додатним десятковим цілим від 1 до 2147483647."
+            )
+        return parsed
+
+    @field_validator("is_purchased", mode="before")
+    @classmethod
+    def validate_is_purchased(cls, value: Any) -> bool | None:
+        if value is None:
+            return None
+        if value == "true":
+            return True
+        if value == "false":
+            return False
+        raise ValueError("Параметр is_purchased приймає лише рівно true або false.")
 
 
 class ShoppingItemResponse(BaseModel):

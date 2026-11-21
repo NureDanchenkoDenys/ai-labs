@@ -3,6 +3,7 @@ from pathlib import Path
 
 from app.db import (
     CATEGORIES,
+    category_exists,
     category_exists_in_tx,
     delete_shopping_item_in_tx,
     fetch_categories,
@@ -108,10 +109,25 @@ def list_shopping_lists(db_path: str | Path) -> list[ShoppingListResponse]:
 def get_shopping_list(
     db_path: str | Path,
     list_id: int,
+    category_id: int | None = None,
+    is_purchased: bool | None = None,
 ) -> ShoppingListDetailResponse:
-    record = fetch_shopping_list_with_items(db_path=db_path, list_id=list_id)
+    if category_id is None and is_purchased is None:
+        record = fetch_shopping_list_with_items(db_path=db_path, list_id=list_id)
+    else:
+        record = fetch_shopping_list_with_items(
+            db_path=db_path,
+            list_id=list_id,
+            category_id=category_id,
+            is_purchased=is_purchased,
+        )
     if record is None:
         raise ListNotFoundError(list_id)
+    if category_id is not None and not category_exists(
+        db_path=db_path,
+        category_id=category_id,
+    ):
+        raise CategoryNotFoundError(category_id, field="query.category_id")
     return ShoppingListDetailResponse.model_validate(record)
 
 

@@ -219,6 +219,14 @@ def shopping_list_exists(
     return row is not None
 
 
+def category_exists(
+    db_path: str | Path,
+    category_id: int,
+) -> bool:
+    with closing(get_connection(db_path)) as conn:
+        return category_exists_in_tx(conn, category_id)
+
+
 def insert_shopping_item(
     db_path: str | Path,
     list_id: int,
@@ -294,7 +302,19 @@ def insert_shopping_item(
 def fetch_shopping_list_with_items(
     db_path: str | Path,
     list_id: int,
+    category_id: int | None = None,
+    is_purchased: bool | None = None,
 ) -> dict[str, Any] | None:
+    conditions = ["list_id = ?"]
+    params: list[int] = [list_id]
+    if category_id is not None:
+        conditions.append("category_id = ?")
+        params.append(category_id)
+    if is_purchased is not None:
+        conditions.append("is_purchased = ?")
+        params.append(1 if is_purchased else 0)
+    where_clause = " AND ".join(conditions)
+
     with closing(get_connection(db_path)) as conn:
         list_row = conn.execute(
             "SELECT id, name, created_at FROM shopping_lists WHERE id = ?",
@@ -304,7 +324,7 @@ def fetch_shopping_list_with_items(
             return None
 
         item_rows = conn.execute(
-            """
+            f"""
             SELECT
                 id,
                 list_id,
@@ -315,10 +335,10 @@ def fetch_shopping_list_with_items(
                 is_purchased,
                 created_at
             FROM shopping_items
-            WHERE list_id = ?
+            WHERE {where_clause}
             ORDER BY created_at ASC, id ASC
             """,
-            (list_id,),
+            tuple(params),
         ).fetchall()
 
     return {

@@ -5,7 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi import Path as PathParam
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
@@ -15,6 +15,7 @@ from app.db import DEFAULT_DB_PATH, init_db
 from app.schemas import (
     CategoryResponse,
     ShoppingItemCreate,
+    ShoppingItemFilterQuery,
     ShoppingItemPurchaseUpdate,
     ShoppingItemResponse,
     ShoppingItemUpdate,
@@ -54,6 +55,9 @@ def error_response(
             }
         },
     )
+
+
+ALLOWED_LIST_FILTER_PARAMS = frozenset({"category_id", "is_purchased"})
 
 
 def _unexpected_query_fields(request: Request) -> list[dict[str, str]]:
@@ -98,6 +102,63 @@ async def _unexpected_get_input_response(
         route_label=route_label,
         method="GET",
     )
+
+
+async def _parse_get_list_filters(
+    request: Request,
+) -> tuple[ShoppingItemFilterQuery | None, JSONResponse | None]:
+    fields: list[dict[str, str]] = []
+    seen_allowed: dict[str, list[str]] = {}
+
+    for key, value in request.query_params.multi_items():
+        if key not in ALLOWED_LIST_FILTER_PARAMS:
+            fields.append(
+                {
+                    "field": f"query.{key}",
+                    "message": "Невідомий query-параметр для GET /lists/{list_id}.",
+                }
+            )
+        else:
+            seen_allowed.setdefault(key, []).append(value)
+
+    single_allowed: dict[str, str] = {}
+    for key, values in seen_allowed.items():
+        if len(values) > 1:
+            fields.append(
+                {
+                    "field": f"query.{key}",
+                    "message": "Повторення query-параметра не допускається.",
+                }
+            )
+        else:
+            single_allowed[key] = values[0]
+
+    parsed: ShoppingItemFilterQuery | None = None
+    try:
+        parsed = ShoppingItemFilterQuery.model_validate(single_allowed)
+    except ValidationError as exc:
+        fields.extend(_format_validation_fields(exc.errors(), prefix=("query",)))
+
+    if await request.body():
+        fields.append(
+            {
+                "field": "body",
+                "message": "GET-запит не приймає тіло.",
+            }
+        )
+
+    if fields:
+        return (
+            None,
+            error_response(
+                status_code=422,
+                code="validation_error",
+                message="Некоректні вхідні дані для GET /lists/{list_id}.",
+                fields=fields,
+            ),
+        )
+
+    return (parsed, None)
 
 
 def _format_validation_fields(
@@ -389,14 +450,37 @@ def create_app(db_path: str | Path = DEFAULT_DB_PATH) -> FastAPI:
     async def get_list(
         list_id: Annotated[int, PathParam(ge=1, le=2147483647)],
         request: Request,
+        category_id: Annotated[
+            str | None,
+            Query(
+                description=(
+                    "Необов’язковий фільтр за id категорії (додатне ціле 1–10)."
+                )
+            ),
+        ] = None,
+        is_purchased: Annotated[
+            str | None,
+            Query(
+                description=(
+                    "Необов’язковий фільтр за станом придбання (рівно true або false)."
+                )
+            ),
+        ] = None,
     ) -> ShoppingListDetailResponse | JSONResponse:
-        invalid_input = await _unexpected_get_input_response(
-            request,
-            "GET /lists/{list_id}",
+        del category_id, is_purchased
+        filters, error = await _parse_get_list_filters(request)
+        if error is not None:
+            return error
+        if filters is None or (
+            filters.category_id is None and filters.is_purchased is None
+        ):
+            return get_shopping_list(request.app.state.db_path, list_id)
+        return get_shopping_list(
+            request.app.state.db_path,
+            list_id,
+            category_id=filters.category_id,
+            is_purchased=filters.is_purchased,
         )
-        if invalid_input is not None:
-            return invalid_input
-        return get_shopping_list(request.app.state.db_path, list_id)
 
     @application.post(
         "/lists/{list_id}/items",
