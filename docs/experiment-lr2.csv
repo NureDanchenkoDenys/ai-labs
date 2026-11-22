@@ -1,0 +1,1 @@
+run_id,variant,task_name,date_utc,executor,ai_tool_and_model,duration_minutes,total_tests,first_run_passed,first_run_failed,final_passed,final_failed,ruff_first_run_issues,ruff_final_issues,fix_iterations,defects_found,loc_code,notes
